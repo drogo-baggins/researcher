@@ -74,3 +74,43 @@ class QueryAgent:
     @staticmethod
     def _default_analysis() -> Dict[str, Any]:
         return {"needs_search": False, "keywords": [], "reasoning": "分析に失敗しました。"}
+
+    def generate_retry_query(
+        self, original_query: str, failed_domains: set, previous_keywords: List[str]
+    ) -> str:
+        """
+        Generate alternative search query to retry with different sources.
+        Avoids previously failed domains by suggesting alternative search terms.
+        
+        Args:
+            original_query: The original search query
+            failed_domains: Set of domains that failed during crawling
+            previous_keywords: Keywords extracted from previous search
+        
+        Returns:
+            New search query string, or original_query on failure
+        """
+        if self.language == "ja":
+            prompt = (
+                f"前回の検索でクロールに失敗したドメイン: {', '.join(failed_domains) if failed_domains else '（なし）'}。\n"
+                f"これらを避けて、異なるソースから情報を得られるよう代替の検索語を提案してください。\n"
+                f"元のクエリ: {original_query}\n"
+                f"前回のキーワード: {', '.join(previous_keywords) if previous_keywords else '（なし）'}\n"
+                f"新しい検索クエリのみを出力してください（JSON不要、1行のクエリのみ）。"
+            )
+        else:
+            prompt = (
+                f"Previous crawl failed for domains: {', '.join(failed_domains) if failed_domains else '(none)'}.\n"
+                f"Suggest alternative search terms to avoid these and find information from different sources.\n"
+                f"Original query: {original_query}\n"
+                f"Previous keywords: {', '.join(previous_keywords) if previous_keywords else '(none)'}\n"
+                f"Output only the new search query (no JSON, single line only)."
+            )
+        
+        messages = [{"role": "system", "content": prompt}]
+        try:
+            response = self.ollama_client.generate_response(messages)
+            return response.strip() or original_query
+        except Exception as exc:
+            LOGGER.warning("Retry query generation failed: %s", exc)
+            return original_query

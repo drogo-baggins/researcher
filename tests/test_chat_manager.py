@@ -610,3 +610,135 @@ def test_crawled_content_not_injected_when_turns_zero():
     # システムメッセージにクロール内容が含まれていないことを確認
     system_messages = [m for m in call_args if m.get("role") == "system"]
     assert not any("[Web Content]" in m.get("content", "") for m in system_messages)
+
+
+def test_search_retries_on_low_success_rate():
+    """Test that retry search is executed when success rate < 50%."""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    mock_agent = MagicMock()
+    mock_crawler = MagicMock()
+    
+    # Initial search result
+    mock_searxng.search.side_effect = [
+        {"raw": {}, "results": [{"url": "https://paywall.com", "title": "Paywall", "snippet": "...", "score": 0.9}]},
+        {"raw": {}, "results": [{"url": "https://free.com", "title": "Free", "snippet": "...", "score": 0.8}]},
+    ]
+    
+    # Initial crawl fails, retry succeeds
+    mock_crawler.crawl_results.side_effect = [
+        {"content": {}, "failed_domains": {"paywall.com"}, "success_rate": 0.0, "total_attempts": 1, "successful_crawls": 0},
+        {"content": {"https://free.com": "Content"}, "failed_domains": set(), "success_rate": 1.0, "total_attempts": 1, "successful_crawls": 1},
+    ]
+    mock_crawler.format_crawled_content.return_value = "[Web Content]..."
+    
+    # Agent generates retry query
+    mock_agent.generate_retry_query.return_value = "alternative query"
+    
+    chat = ChatManager(mock_ollama, searxng_client=mock_searxng, agent=mock_agent, web_crawler=mock_crawler)
+    result = chat.search("test query")
+    
+    # Verify retry was executed
+    assert mock_agent.generate_retry_query.call_count == 1
+    assert mock_searxng.search.call_count == 2
+    
+    # Verify consolidated results contain both URLs
+    assert len(result["results"]) == 2
+    urls = {r["url"] for r in result["results"]}
+    assert "https://paywall.com" in urls
+    assert "https://free.com" in urls
+
+
+def test_search_retries_max_three_times():
+    """Test that retry search executes max 3 times."""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    mock_agent = MagicMock()
+    mock_crawler = MagicMock()
+    
+    # All fail
+    mock_searxng.search.return_value = {"raw": {}, "results": [{"url": "https://fail.com", "title": "Fail", "snippet": "..."}]}
+    mock_crawler.crawl_results.return_value = {
+        "content": {}, "failed_domains": {"fail.com"}, "success_rate": 0.0, "total_attempts": 1, "successful_crawls": 0
+    }
+    mock_agent.generate_retry_query.return_value = "retry query"
+    
+    chat = ChatManager(mock_ollama, searxng_client=mock_searxng, agent=mock_agent, web_crawler=mock_crawler)
+    chat.search("test query")
+    
+    # Initial search + 3 retries = 4 total
+    assert mock_searxng.search.call_count == 4
+    assert mock_agent.generate_retry_query.call_count == 3
+
+
+def test_search_stops_retry_on_success():
+    """Test that retry search stops when success rate reaches 50%."""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    mock_agent = MagicMock()
+    mock_crawler = MagicMock()
+    
+    mock_searxng.search.side_effect = [
+        {"raw": {}, "results": [{"url": "https://url1.com", "title": "1", "snippet": "..."}]},
+        {"raw": {}, "results": [{"url": "https://url2.com", "title": "2", "snippet": "..."}]},
+    ]
+    
+    # Initial fails, first retry succeeds
+    mock_crawler.crawl_results.side_effect = [
+        {"content": {}, "failed_domains": {"url1.com"}, "success_rate": 0.0, "total_attempts": 1, "successful_crawls": 0},
+        {"content": {"https://url2.com": "Content"}, "failed_domains": set(), "success_rate": 1.0, "total_attempts": 1, "successful_crawls": 1},
+    ]
+    mock_crawler.format_crawled_content.return_value = "[Web Content]..."
+    mock_agent.generate_retry_query.return_value = "retry query"
+    
+    chat = ChatManager(mock_ollama, searxng_client=mock_searxng, agent=mock_agent, web_crawler=mock_crawler)
+    chat.search("test query")
+    
+    # Initial + 1 retry (not 3)
+    assert mock_searxng.search.call_count == 2
+    assert mock_agent.generate_retry_query.call_count == 1
+
+
+def test_search_no_retry_without_agent():
+    """Test that retry search does not execute without agent."""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    mock_crawler = MagicMock()
+    
+    mock_searxng.search.return_value = {"raw": {}, "results": [{"url": "https://fail.com", "title": "Fail", "snippet": "..."}]}
+    mock_crawler.crawl_results.return_value = {
+        "content": {}, "failed_domains": {"fail.com"}, "success_rate": 0.0, "total_attempts": 1, "successful_crawls": 0
+    }
+    
+    chat = ChatManager(mock_ollama, searxng_client=mock_searxng, agent=None, web_crawler=mock_crawler)
+    chat.search("test query")
+    
+    # No retry without agent
+    assert mock_searxng.search.call_count == 1
+
+
+def test_search_deduplicates_results_by_url():
+    """Test that retry results are deduplicated by URL."""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    mock_agent = MagicMock()
+    mock_crawler = MagicMock()
+    
+    # Initial and retry return same URL
+    mock_searxng.search.side_effect = [
+        {"raw": {}, "results": [{"url": "https://same.com", "title": "Original", "snippet": "...", "score": 0.9}]},
+        {"raw": {}, "results": [{"url": "https://same.com", "title": "Duplicate", "snippet": "...", "score": 0.8}]},
+    ]
+    
+    mock_crawler.crawl_results.side_effect = [
+        {"content": {}, "failed_domains": {"same.com"}, "success_rate": 0.0, "total_attempts": 1, "successful_crawls": 0},
+        {"content": {}, "failed_domains": {"same.com"}, "success_rate": 0.0, "total_attempts": 1, "successful_crawls": 0},
+    ]
+    mock_agent.generate_retry_query.return_value = "retry query"
+    
+    chat = ChatManager(mock_ollama, searxng_client=mock_searxng, agent=mock_agent, web_crawler=mock_crawler)
+    result = chat.search("test query")
+    
+    # Deduplication keeps only 1 result
+    assert len(result["results"]) == 1
+    assert result["results"][0]["url"] == "https://same.com"

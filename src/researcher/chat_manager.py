@@ -155,6 +155,8 @@ class ChatManager:
         # Crawl top URLs to extract content for RAG context and update citations
         self.last_search_content = ""
         self.last_search_turns_remaining = 0  # Reset turns counter
+        crawl_result = None
+        
         if self.web_crawler and results:
             try:
                 crawl_result = self.web_crawler.crawl_results(results, max_urls=3)
@@ -170,6 +172,53 @@ class ChatManager:
                     crawl_result["success_rate"] * 100,
                     crawl_result["failed_domains"]
                 )
+                
+                # Retry logic if success rate is low and agent is available
+                if crawl_result["success_rate"] < 0.5 and self.agent and crawl_result["failed_domains"]:
+                    logger.info("Low success rate (%.1f%%), attempting retry searches...", crawl_result["success_rate"] * 100)
+                    
+                    # Result consolidation using URL as key to deduplicate
+                    all_results = {r.get("url"): r for r in results if r.get("url")}
+                    retry_count = 0
+                    max_retries = 3
+                    
+                    while retry_count < max_retries and crawl_result["success_rate"] < 0.5:
+                        retry_count += 1
+                        retry_query = self.agent.generate_retry_query(
+                            query, crawl_result["failed_domains"], []
+                        )
+                        logger.info("Retry %d/%d with query: %s", retry_count, max_retries, retry_query)
+                        
+                        # Retry search
+                        try:
+                            retry_payload = self.searxng_client.search(retry_query, **kwargs)
+                            retry_results = retry_payload.get("results", [])
+                            
+                            # Apply reranker to retry results
+                            if use_reranker and self.reranker is not None:
+                                try:
+                                    reranked = self.reranker.rerank(retry_query, retry_results)
+                                    if reranked:
+                                        retry_results = reranked
+                                except Exception:
+                                    pass
+                            
+                            # Deduplicate and consolidate results by URL
+                            for r in retry_results:
+                                if r.get("url") and r["url"] not in all_results:
+                                    all_results[r["url"]] = r
+                            
+                            # Retry crawl
+                            if self.web_crawler:
+                                retry_crawl = self.web_crawler.crawl_results(list(all_results.values()), max_urls=5)
+                                crawl_result = retry_crawl  # Update with latest success rate
+                                logger.info("Retry %d success rate: %.1f%%", retry_count, crawl_result["success_rate"] * 100)
+                        except Exception as exc:
+                            logger.warning("Retry %d failed: %s", retry_count, exc)
+                    
+                    # Reflect consolidated results back to results list
+                    results = list(all_results.values())
+                    logger.info("Final integrated results: %d items", len(results))
                 
                 if crawled_content:
                     self.last_search_content = self.web_crawler.format_crawled_content(crawled_content)
