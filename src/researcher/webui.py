@@ -121,6 +121,13 @@ def render_sidebar():
         
         current_id = st.session_state.get("current_session_id")
         
+        # Keep widget state in sync with current_session_id (Comment 1 step 1)
+        if current_id is not None and current_id not in st.session_state.get("_widget_sync_done", {}):
+            st.session_state["session_selector"] = current_id
+            _widget_sync_done = st.session_state.get("_widget_sync_done", {})
+            _widget_sync_done[current_id] = True
+            st.session_state["_widget_sync_done"] = _widget_sync_done
+        
         # Session selector
         session_ids = [None] + list(session_options.keys())
         session_labels = ["新規セッション"] + [session_options[sid] for sid in session_ids[1:]]
@@ -140,36 +147,41 @@ def render_sidebar():
             key="session_selector"
         )
         
-        # Handle session switch
-        if selected_id != current_id:
-            if selected_id is None:
-                # New session: clear history while keeping system messages
-                st.session_state.current_session_id = None
-                st.session_state.messages = []
-                st.session_state.chat_manager.clear_history(keep_system=True, clear_citations=True)
-            else:
-                # Load existing session
-                session_data = st.session_state.session_manager.load_session(selected_id)
-                if session_data:
-                    st.session_state.current_session_id = selected_id
-                    st.session_state.messages = session_data["history"]
-                    st.session_state.model = session_data["model"]
-                    st.session_state.language = session_data["language"]
-                    
-                    # Sync ChatManager with loaded session configuration (Comment 1)
-                    st.session_state.chat_manager.messages = session_data["history"]
-                    st.session_state.chat_manager.language = session_data["language"]
-                    st.session_state.chat_manager.ollama_client.model = session_data["model"]
-                    st.session_state.chat_manager.reranker.ollama_client.model = session_data["model"]
-                    
-                    # Recreate agent with loaded language if it exists
-                    if st.session_state.chat_manager.agent:
-                        st.session_state.chat_manager.agent = QueryAgent(
-                            st.session_state.chat_manager.ollama_client,
-                            language=session_data["language"]
-                        )
-                    
-                    st.rerun()
+        # Track the last loaded session to avoid unnecessary reloads (Comment 1 step 2)
+        last_loaded_id = st.session_state.get("_last_loaded_session_id")
+        
+        # Handle session switch: load session if different from last loaded (Comment 1 step 2)
+        if selected_id is not None and selected_id != last_loaded_id:
+            # Load existing session
+            session_data = st.session_state.session_manager.load_session(selected_id)
+            if session_data:
+                st.session_state.current_session_id = selected_id
+                st.session_state.messages = session_data["history"]
+                st.session_state.model = session_data["model"]
+                st.session_state.language = session_data["language"]
+                st.session_state["_last_loaded_session_id"] = selected_id
+                
+                # Sync ChatManager with loaded session configuration
+                st.session_state.chat_manager.messages = session_data["history"]
+                st.session_state.chat_manager.language = session_data["language"]
+                st.session_state.chat_manager.ollama_client.model = session_data["model"]
+                st.session_state.chat_manager.reranker.ollama_client.model = session_data["model"]
+                
+                # Recreate agent with loaded language if it exists
+                if st.session_state.chat_manager.agent:
+                    st.session_state.chat_manager.agent = QueryAgent(
+                        st.session_state.chat_manager.ollama_client,
+                        language=session_data["language"]
+                    )
+                
+                st.rerun()
+        elif selected_id is None and last_loaded_id is not None:
+            # New session selected
+            st.session_state.current_session_id = None
+            st.session_state.messages = []
+            st.session_state.chat_manager.clear_history(keep_system=True, clear_citations=True)
+            st.session_state["_last_loaded_session_id"] = None
+            st.rerun()
         
         # Session action buttons
         col1, col2 = st.columns(2)
@@ -209,9 +221,10 @@ def render_sidebar():
                 st.write(f"{len(search_results)}件見つかりました")
                 for result in search_results[:5]:  # Show top 5
                     if st.button(f"📄 {result['name']}", key=f"search_{result['id']}"):
-                        # Sync both current_session_id and session_selector (Comment 1)
+                        # Sync both current_session_id and session_selector widget (Comment 1 step 3)
                         st.session_state.current_session_id = result["id"]
-                        st.session_state.session_selector = result["id"]
+                        st.session_state["session_selector"] = result["id"]
+                        st.session_state["_last_loaded_session_id"] = None  # Force reload
                         st.rerun()
             else:
                 st.info("検索結果なし")

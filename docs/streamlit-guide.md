@@ -403,6 +403,60 @@ streamlit run src/researcher/webui.py -- --server.port 8501
 
 **強く推奨**: VPN や SSH トンネルなどの追加のセキュリティレイヤーを使用してください。
 
+### Streamlit 設定によるセキュリティ強化
+
+Streamlit の設定ファイル `~/.streamlit/config.toml` を使用して、localhost のみにバインドすることを強制できます:
+
+```toml
+[server]
+# localhost (127.0.0.1) のみにバインド - デフォルト
+# address = "127.0.0.1"
+
+# または明示的に指定
+address = "127.0.0.1"
+port = 8501
+
+[client]
+# エラー詳細の非表示
+showErrorDetails = false
+```
+
+**警告**: 以下の設定を行うと、ローカルネットワーク上の全員がアクセス可能になります（認証なしのため）:
+
+```toml
+[server]
+# 推奨されません！
+address = "0.0.0.0"  # ← すべてのインターフェースでリッスン
+```
+
+もし共有ネットワーク環境で WebUI を使用する必要がある場合は、以下を強く推奨します:
+
+1. **SSH トンネル経由でのリモートアクセス**:
+   ```bash
+   ssh -N -L 8501:localhost:8501 user@remote-machine
+   # ローカルブラウザで http://localhost:8501 にアクセス
+   ```
+
+2. **リバースプロキシ + HTTPS + 認証** (Nginx 例):
+   ```nginx
+   server {
+       listen 443 ssl;
+       server_name researcher.example.com;
+       
+       ssl_certificate /path/to/cert.pem;
+       ssl_certificate_key /path/to/key.pem;
+       
+       auth_basic "researcher";
+       auth_basic_user_file /etc/nginx/.htpasswd;
+       
+       location / {
+           proxy_pass http://127.0.0.1:8501;
+       }
+   }
+   ```
+
+3. **VPN 接続**: ローカルネットワークではなく VPN で保護されたネットワーク内のみで実行
+
 ### セッションデータの管理
 
 セッションデータが含む内容:
