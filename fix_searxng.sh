@@ -107,6 +107,6 @@ else
     echo "代替方法:"
     echo "  1) 数秒待機してから再度試す"
     echo "  2) Docker Compose を使用する"
-    echo "  3) Perplexica WebUI を使用する"
+    echo "  3) Streamlit WebUI を使用する (researcher-webui)"
     exit 1
 fi

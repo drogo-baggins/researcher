@@ -209,7 +209,9 @@ def render_sidebar():
                 st.write(f"{len(search_results)}件見つかりました")
                 for result in search_results[:5]:  # Show top 5
                     if st.button(f"📄 {result['name']}", key=f"search_{result['id']}"):
+                        # Sync both current_session_id and session_selector (Comment 1)
                         st.session_state.current_session_id = result["id"]
+                        st.session_state.session_selector = result["id"]
                         st.rerun()
             else:
                 st.info("検索結果なし")
