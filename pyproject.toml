@@ -12,8 +12,10 @@ dependencies = [
     "python-dateutil>=2.8.0",
     "mcp>=1.0.0",
     "beautifulsoup4>=4.12.0",
-    "lxml>=4.9.0"
+    "lxml>=4.9.0",
+    "streamlit>=1.38.0"
 ]
 
 [project.scripts]
 researcher = "researcher.cli:main"
+researcher-webui = "researcher.webui:main"
