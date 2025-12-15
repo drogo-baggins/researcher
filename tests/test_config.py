@@ -1,5 +1,7 @@
 import os
 from unittest.mock import patch
+import tempfile
+from pathlib import Path
 
 from researcher.config import (
     DEFAULT_RELEVANCE_THRESHOLD,
@@ -8,6 +10,9 @@ from researcher.config import (
     get_embedding_model,
     get_relevance_threshold,
     get_searxng_url,
+    load_blacklist_domains,
+    save_blacklist_domains,
+    BLACKLIST_FILE_PATH,
 )
 
 
@@ -48,3 +53,54 @@ def test_get_relevance_threshold_resolution():
     with patch.dict(os.environ, {"RELEVANCE_THRESHOLD": "0.8"}, clear=True):
         assert get_relevance_threshold() == 0.8
     assert get_relevance_threshold(0.9) == 0.9
+
+
+def test_load_blacklist_domains_empty():
+    """Test loading blacklist when file doesn't exist."""
+    with patch("researcher.config.BLACKLIST_FILE_PATH", Path("/nonexistent/path/blacklist.json")):
+        result = load_blacklist_domains()
+        assert result == set()
+
+
+def test_load_blacklist_domains_valid():
+    """Test loading valid blacklist JSON file."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        import json
+        json.dump(["wsj.com", "nytimes.com", "paywall.com"], f)
+        temp_path = f.name
+    
+    try:
+        with patch("researcher.config.BLACKLIST_FILE_PATH", Path(temp_path)):
+            result = load_blacklist_domains()
+            assert result == {"wsj.com", "nytimes.com", "paywall.com"}
+    finally:
+        Path(temp_path).unlink()
+
+
+def test_save_blacklist_domains():
+    """Test saving blacklist domains to JSON file."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_path = Path(tmpdir) / "blacklist.json"
+        with patch("researcher.config.BLACKLIST_FILE_PATH", temp_path):
+            domains = {"example.com", "test.com"}
+            save_blacklist_domains(domains)
+            
+            # Verify file was created and contains correct data
+            assert temp_path.exists()
+            import json
+            with open(temp_path, "r", encoding="utf-8") as f:
+                saved_data = json.load(f)
+                assert set(saved_data) == domains
+
+
+def test_save_blacklist_domains_creates_directory():
+    """Test that save_blacklist_domains creates parent directories."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_path = Path(tmpdir) / "subdir" / "nested" / "blacklist.json"
+        with patch("researcher.config.BLACKLIST_FILE_PATH", temp_path):
+            domains = {"example.com"}
+            save_blacklist_domains(domains)
+            
+            # Verify directory structure was created
+            assert temp_path.parent.exists()
+            assert temp_path.exists()

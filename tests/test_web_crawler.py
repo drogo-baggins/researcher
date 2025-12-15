@@ -7,6 +7,16 @@ from researcher.web_crawler import WebCrawler
 class TestWebCrawler:
     """Test WebCrawler functionality."""
     
+    def setup_method(self):
+        """Setup before each test: mock load_blacklist_domains to prevent file I/O."""
+        self.patcher = patch("researcher.web_crawler.load_blacklist_domains")
+        self.mock_load = self.patcher.start()
+        self.mock_load.return_value = set()
+    
+    def teardown_method(self):
+        """Cleanup after each test."""
+        self.patcher.stop()
+    
     def test_crawl_results_returns_dict(self):
         """Test that crawl_results returns a dictionary with correct structure."""
         crawler = WebCrawler()
@@ -270,3 +280,37 @@ class TestWebCrawler:
         assert result["successful_crawls"] == 0
         assert len(result["content"]) == 0
         assert result["total_attempts"] == 2
+    
+    def test_blacklist_loads_from_config(self):
+        """Test that blacklist is loaded from config on initialization."""
+        with patch("researcher.web_crawler.load_blacklist_domains") as mock_load:
+            mock_load.return_value = {"blocked.com", "paywall.com"}
+            crawler = WebCrawler()
+            
+            assert crawler.blacklist_domains == {"blocked.com", "paywall.com"}
+            mock_load.assert_called_once()
+    
+    def test_blacklist_saves_on_failure(self):
+        """Test that blacklist is saved when domain fails."""
+        with patch("researcher.web_crawler.load_blacklist_domains", return_value=set()):
+            with patch("researcher.web_crawler.save_blacklist_domains") as mock_save:
+                crawler = WebCrawler()
+                
+                # Mock crawl failure to trigger blacklist addition
+                with patch("requests.get") as mock_get:
+                    mock_get.side_effect = Exception("Network error")
+                    result = crawler.crawl_url("https://example.com/page")
+                    
+                    assert result is None
+                    assert "example.com" in crawler.blacklist_domains
+                    mock_save.assert_called_once()
+    
+    def test_add_to_blacklist(self):
+        """Test manual blacklist addition."""
+        with patch("researcher.web_crawler.load_blacklist_domains", return_value=set()):
+            with patch("researcher.web_crawler.save_blacklist_domains") as mock_save:
+                crawler = WebCrawler()
+                crawler.add_to_blacklist("example.com")
+                
+                assert "example.com" in crawler.blacklist_domains
+                mock_save.assert_called_once_with({"example.com"})

@@ -264,6 +264,7 @@ source ~/.zshrc
 | コマンド | 説明 | 例 |
 |---------|------|-----|
 | `/search <query>` | 手動で検索を実行 | `/search Python 3.14 new features` |
+| `/blacklist [show\|add\|clear]` | ドメインブラックリスト管理 | `/blacklist add wsj.com` |
 | `/history` | 会話履歴を表示 | `/history` |
 | `/clear` | 履歴をクリア | `/clear` |
 | `/perplexica-url` | Perplexica WebUI の URL を表示 | `/perplexica-url` |
@@ -338,6 +339,47 @@ kill -9 <PID>
 # MCPの詳細ドキュメントを参照
 cat docs/mcp-setup.md
 ```
+
+### ペイウォール・アクセス制限ドメインの対策
+
+**症状**: 特定のドメイン（例: wsj.com, nytimes.com）からの情報取得に失敗し、ハルシネーションが発生する
+
+**原因**: ペイウォールや認証が必要なサイトはクロールできず、LLMが古い知識で回答してしまう
+
+**解決策**:
+
+1. **自動ブラックリスト**: 失敗したドメインは自動的にブラックリストに追加され、次回以降スキップされます
+   ```bash
+   ./run.sh --auto-search-default
+   You: 最新の経済ニュースは？
+   [クロール失敗: wsj.com が自動的にブラックリストに追加されました]
+   ```
+
+2. **手動ブラックリスト追加**: 問題のあるドメインを事前に追加
+   ```bash
+   You: /blacklist add wsj.com
+   [ブラックリストに追加: wsj.com]
+   
+   You: /blacklist add nytimes.com
+   [ブラックリストに追加: nytimes.com]
+   ```
+
+3. **ブラックリスト確認**:
+   ```bash
+   You: /blacklist show
+   [ブラックリストドメイン]
+     - nytimes.com
+     - wsj.com
+   ```
+
+4. **ブラックリストクリア**（誤追加時）:
+   ```bash
+   You: /blacklist clear
+   ブラックリストをクリアしますか？ (yes/no): yes
+   [ブラックリストをクリアしました]
+   ```
+
+**ヒント**: ブラックリストは `~/.researcher/blacklist.json` に保存され、再起動後も保持されます。
 
 ---
 

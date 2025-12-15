@@ -237,3 +237,31 @@ def ensure_searxng_running() -> bool:
     
     return False
 
+
+# Blacklist persistence configuration
+BLACKLIST_FILE_PATH = Path.home() / ".researcher" / "blacklist.json"
+
+
+def load_blacklist_domains() -> set:
+    """Load blacklist domains from JSON file."""
+    if not BLACKLIST_FILE_PATH.exists():
+        return set()
+    try:
+        with open(BLACKLIST_FILE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return set(data)
+    except Exception as exc:
+        logging.warning("ブラックリスト読み込みエラー: %s", exc)
+    return set()
+
+
+def save_blacklist_domains(domains: set) -> None:
+    """Save blacklist domains to JSON file."""
+    try:
+        BLACKLIST_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(BLACKLIST_FILE_PATH, "w", encoding="utf-8") as f:
+            json.dump(sorted(list(domains)), f, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logging.warning("ブラックリスト保存エラー: %s", exc)
+

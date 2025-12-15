@@ -201,6 +201,7 @@ def main():
     perplexica_url = os.environ.get("PERPLEXICA_URL", "http://localhost:3000")
     print(f"Perplexica WebUI: {perplexica_url} (画像・スタイル付き回答はWebUIで確認)")
     print("/exit で終了, /clear で履歴クリア, /history で履歴表示, /search <query> でSearXNG検索")
+    print("/blacklist [show|add|clear] でドメインブラックリスト管理")
     print("/perplexica-url でWebUI URL表示, /sync-status で同期確認")
     if auto_search_enabled:
         print("自動検索モード: 有効（最新情報が必要な質問を自動検知）")
@@ -291,6 +292,44 @@ def main():
                         print(search_result["formatted"])
                     except RuntimeError as exc:
                         print(f"[ERROR] 検索に失敗しました: {exc}")
+                    continue
+                elif user_input.startswith("/blacklist"):
+                    if not web_crawler:
+                        print("[ERROR] WebCrawler機能が有効化されていません")
+                        continue
+                    
+                    parts = user_input.split(maxsplit=2)
+                    subcommand = parts[1] if len(parts) > 1 else "show"
+                    
+                    if subcommand in ("show", "list"):
+                        if web_crawler.blacklist_domains:
+                            print("[ブラックリストドメイン]")
+                            for domain in sorted(web_crawler.blacklist_domains):
+                                print(f"  - {domain}")
+                        else:
+                            print("[ブラックリストは空です]")
+                    
+                    elif subcommand == "add":
+                        if len(parts) < 3:
+                            print("使用法: /blacklist add <domain>")
+                            continue
+                        domain = parts[2].strip()
+                        web_crawler.add_to_blacklist(domain)
+                        print(f"[ブラックリストに追加: {domain}]")
+                    
+                    elif subcommand == "clear":
+                        confirm = input("ブラックリストをクリアしますか？ (yes/no): ").strip().lower()
+                        if confirm in ("yes", "y"):
+                            web_crawler.blacklist_domains.clear()
+                            from researcher.config import save_blacklist_domains
+                            save_blacklist_domains(web_crawler.blacklist_domains)
+                            print("[ブラックリストをクリアしました]")
+                        else:
+                            print("[キャンセルしました]")
+                    
+                    else:
+                        print("使用法: /blacklist [show|add <domain>|clear]")
+                    
                     continue
                 elif user_input == "/mcp-tools":
                     if not mcp_client:

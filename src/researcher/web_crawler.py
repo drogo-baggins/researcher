@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 
+from researcher.config import load_blacklist_domains, save_blacklist_domains
 
 LOGGER = logging.getLogger(__name__)
 
@@ -15,7 +16,10 @@ class WebCrawler:
     def __init__(self, timeout: int = 10, max_chars: int = 1000, blacklist_domains: Optional[set] = None) -> None:
         self.timeout = timeout
         self.max_chars = max_chars
-        self.blacklist_domains = blacklist_domains if blacklist_domains is not None else set()
+        if blacklist_domains is None:
+            self.blacklist_domains = load_blacklist_domains()
+        else:
+            self.blacklist_domains = blacklist_domains
     
     def crawl_url(self, url: str) -> Optional[str]:
         """
@@ -63,6 +67,7 @@ class WebCrawler:
             if not text:
                 LOGGER.warning("Empty content from %s, adding to blacklist", url)
                 self.blacklist_domains.add(domain)
+                save_blacklist_domains(self.blacklist_domains)
                 return None
             
             # Return text up to max_chars limit
@@ -70,6 +75,7 @@ class WebCrawler:
         except Exception as exc:
             LOGGER.warning("Failed to crawl %s, adding domain to blacklist", url, exc_info=True)
             self.blacklist_domains.add(domain)
+            save_blacklist_domains(self.blacklist_domains)
             return None
     
     def crawl_results(self, results: List[Dict[str, Any]], max_urls: int = 3) -> Dict[str, Any]:
@@ -132,3 +138,8 @@ class WebCrawler:
             lines.append(content)
         
         return "\n".join(lines)
+    
+    def add_to_blacklist(self, domain: str) -> None:
+        """Manually add domain to blacklist and persist."""
+        self.blacklist_domains.add(domain)
+        save_blacklist_domains(self.blacklist_domains)
