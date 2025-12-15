@@ -14,6 +14,7 @@ from researcher.ollama_client import OllamaClient
 from researcher.searxng_client import SearXNGClient
 from researcher.web_crawler import WebCrawler
 from researcher.reranker import EmbeddingReranker
+from researcher.session_manager import SessionManager
 from researcher.config import (
     get_searxng_url,
     get_embedding_model,
@@ -26,6 +27,10 @@ from researcher.config import (
 def initialize_session():
     """Initialize session state with all required components on first access."""
     if "initialized" not in st.session_state:
+        # Initialize SessionManager for persistence
+        st.session_state.session_manager = SessionManager()
+        st.session_state.current_session_id = None
+        
         # Ensure services are running
         try:
             if not ensure_ollama_running():
@@ -96,11 +101,95 @@ def initialize_session():
 
 
 def render_sidebar():
-    """Render the configuration sidebar."""
+    """Render the configuration sidebar with session management."""
     with st.sidebar:
         st.title("⚙️ 設定")
         
-        # Model selection
+        # === Session Management Section ===
+        st.subheader("💾 セッション")
+        
+        # Get current session state
+        sessions = st.session_state.session_manager.list_sessions()
+        session_options = {s["id"]: f"{s['name']} ({s['updated_at'][:10]})" for s in sessions}
+        
+        current_id = st.session_state.get("current_session_id")
+        
+        # Session selector
+        session_ids = [None] + list(session_options.keys())
+        session_labels = ["新規セッション"] + [session_options[sid] for sid in session_ids[1:]]
+        
+        current_index = 0
+        if current_id is not None and current_id in session_options:
+            try:
+                current_index = session_ids.index(current_id)
+            except ValueError:
+                current_index = 0
+        
+        selected_id = st.selectbox(
+            "セッション選択",
+            options=session_ids,
+            format_func=lambda x: session_labels[session_ids.index(x)],
+            index=current_index,
+            key="session_selector"
+        )
+        
+        # Handle session switch
+        if selected_id != current_id:
+            if selected_id is None:
+                # New session
+                st.session_state.current_session_id = None
+                st.session_state.messages = []
+                st.session_state.chat_manager.messages = []
+            else:
+                # Load existing session
+                session_data = st.session_state.session_manager.load_session(selected_id)
+                if session_data:
+                    st.session_state.current_session_id = selected_id
+                    st.session_state.messages = session_data["history"]
+                    st.session_state.model = session_data["model"]
+                    st.session_state.language = session_data["language"]
+                    # Restore ChatManager history
+                    st.session_state.chat_manager.messages = session_data["history"]
+                    st.rerun()
+        
+        # Session action buttons
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("➕ 新規", key="new_session_btn"):
+                name = f"Session {len(sessions) + 1}"
+                new_id = st.session_state.session_manager.create_session(
+                    name, st.session_state.model, st.session_state.language
+                )
+                if new_id:
+                    st.session_state.current_session_id = new_id
+                    st.session_state.messages = []
+                    st.session_state.chat_manager.messages = []
+                    st.rerun()
+        
+        with col2:
+            if st.button("🗑️ 削除", disabled=(current_id is None), key="delete_session_btn"):
+                st.session_state.session_manager.delete_session(current_id)
+                st.session_state.current_session_id = None
+                st.session_state.messages = []
+                st.session_state.chat_manager.messages = []
+                st.rerun()
+        
+        # Session search
+        search_query = st.text_input("🔍 セッション検索", placeholder="キーワードで検索...", key="session_search")
+        if search_query:
+            search_results = st.session_state.session_manager.search_sessions(search_query)
+            if search_results:
+                st.write(f"{len(search_results)}件見つかりました")
+                for result in search_results[:5]:  # Show top 5
+                    if st.button(f"📄 {result['name']}", key=f"search_{result['id']}"):
+                        st.session_state.current_session_id = result["id"]
+                        st.rerun()
+            else:
+                st.info("検索結果なし")
+        
+        st.divider()
+        
+        # === Configuration Section ===
         st.subheader("🤖 モデル設定")
         model = st.text_input(
             "Ollamaモデル",
@@ -119,7 +208,8 @@ def render_sidebar():
             "言語 / Language",
             ["ja", "en"],
             index=0 if st.session_state.get("language", "ja") == "ja" else 1,
-            format_func=lambda x: "日本語" if x == "ja" else "English"
+            format_func=lambda x: "日本語" if x == "ja" else "English",
+            key="language_selector"
         )
         if language_option != st.session_state.get("language"):
             st.session_state.language = language_option
@@ -136,7 +226,8 @@ def render_sidebar():
         auto_search = st.checkbox(
             "自動検索を有効化",
             value=st.session_state.get("auto_search", True),
-            help="最新情報が必要な質問を自動的に検索"
+            help="最新情報が必要な質問を自動的に検索",
+            key="auto_search_checkbox"
         )
         st.session_state.auto_search = auto_search and bool(st.session_state.chat_manager.searxng_client)
         
@@ -213,6 +304,25 @@ def render_chat():
                 full_response = f"エラーが発生しました: {e}"
         
         st.session_state.messages.append({"role": "assistant", "content": full_response})
+        
+        # Auto-save session
+        if st.session_state.current_session_id is None:
+            # Create new session on first message
+            session_name = f"Session {user_input[:20]}..." if len(user_input) > 20 else user_input
+            new_id = st.session_state.session_manager.create_session(
+                session_name, st.session_state.model, st.session_state.language
+            )
+            if new_id:
+                st.session_state.current_session_id = new_id
+        
+        # Save session
+        if st.session_state.current_session_id is not None:
+            st.session_state.session_manager.save_session(
+                st.session_state.current_session_id,
+                st.session_state.messages,
+                st.session_state.model,
+                st.session_state.language
+            )
 
 
 def render_citations():
