@@ -1,7 +1,9 @@
 from typing import List, Optional
 import logging
+import os
 
 import ollama
+import requests
 
 LOGGER = logging.getLogger(__name__)
 
@@ -61,9 +63,33 @@ class OllamaClient:
             エラー時は空リスト
         """
         try:
+            # Try using ollama.list() library method
             response = ollama.list()
-            models = response.get("models", [])
-            return [m.get("name", "") for m in models if m.get("name")]
+            # response is a ListResponse object with a 'models' attribute
+            if hasattr(response, 'models') and response.models:
+                # response.models is a list of Model objects
+                # Each Model has a 'model' attribute (not 'name')
+                return [m.model for m in response.models if m.model]
+            elif isinstance(response, dict):
+                # Fallback for dict-like responses
+                models = response.get("models", [])
+                if models:
+                    return [m.get("model", "") or m.get("name", "") for m in models if m.get("model") or m.get("name")]
         except Exception as e:
-            LOGGER.warning(f"モデル一覧の取得に失敗: {e}")
-            return []
+            LOGGER.debug(f"ollama.list() library method failed: {e}, trying HTTP API...")
+        
+        # Fallback to direct HTTP API call
+        try:
+            ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+            response = requests.get(f"{ollama_url}/api/tags", timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("models", [])
+                return [m.get("name", "") for m in models if m.get("name")]
+        except requests.RequestException as e:
+            LOGGER.warning(f"HTTP API call to Ollama failed: {e}")
+        except Exception as e:
+            LOGGER.warning(f"Error parsing Ollama models response: {e}")
+        
+        LOGGER.warning("Failed to retrieve model list from Ollama")
+        return []
