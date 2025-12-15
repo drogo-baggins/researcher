@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, patch
+from urllib.parse import urlparse
 from researcher.web_crawler import WebCrawler
 
 
@@ -7,7 +8,7 @@ class TestWebCrawler:
     """Test WebCrawler functionality."""
     
     def test_crawl_results_returns_dict(self):
-        """Test that crawl_results returns a dictionary."""
+        """Test that crawl_results returns a dictionary with correct structure."""
         crawler = WebCrawler()
         results = [
             {"url": "https://example.com", "title": "Example"},
@@ -16,12 +17,21 @@ class TestWebCrawler:
         
         with patch.object(crawler, "crawl_url") as mock_crawl:
             mock_crawl.side_effect = ["Content 1", "Content 2"]
-            crawled = crawler.crawl_results(results, max_urls=2)
+            result = crawler.crawl_results(results, max_urls=2)
         
-        assert isinstance(crawled, dict)
-        assert len(crawled) == 2
-        assert crawled["https://example.com"] == "Content 1"
-        assert crawled["https://example.org"] == "Content 2"
+        # Check new structure
+        assert isinstance(result, dict)
+        assert "content" in result
+        assert isinstance(result["content"], dict)
+        assert len(result["content"]) == 2
+        assert result["content"]["https://example.com"] == "Content 1"
+        assert result["content"]["https://example.org"] == "Content 2"
+        
+        # Check metadata
+        assert result["success_rate"] == 1.0
+        assert result["total_attempts"] == 2
+        assert result["successful_crawls"] == 2
+        assert len(result["failed_domains"]) == 0
     
     def test_crawl_results_respects_max_urls(self):
         """Test that crawl_results respects max_urls parameter."""
@@ -34,9 +44,9 @@ class TestWebCrawler:
         
         with patch.object(crawler, "crawl_url") as mock_crawl:
             mock_crawl.side_effect = ["Content 1", "Content 2"]
-            crawled = crawler.crawl_results(results, max_urls=2)
+            result = crawler.crawl_results(results, max_urls=2)
         
-        assert len(crawled) == 2
+        assert len(result["content"]) == 2
         assert mock_crawl.call_count == 2
     
     def test_crawl_results_handles_failed_crawl(self):
@@ -49,10 +59,13 @@ class TestWebCrawler:
         
         with patch.object(crawler, "crawl_url") as mock_crawl:
             mock_crawl.side_effect = ["Content 1", None]  # Second crawl fails
-            crawled = crawler.crawl_results(results, max_urls=2)
+            result = crawler.crawl_results(results, max_urls=2)
         
-        assert len(crawled) == 1
-        assert crawled["https://example.com"] == "Content 1"
+        assert len(result["content"]) == 1
+        assert result["content"]["https://example.com"] == "Content 1"
+        assert result["successful_crawls"] == 1
+        assert result["total_attempts"] == 2
+        assert pytest.approx(result["success_rate"], 0.01) == 0.5
     
     def test_format_crawled_content(self):
         """Test that format_crawled_content returns properly formatted string."""
@@ -167,3 +180,93 @@ class TestWebCrawler:
         # Should have normalized whitespace
         assert "multiple     spaces" not in content
         assert "multiple spaces" in content
+
+    # ===== Blacklist Tests =====
+    
+    def test_blacklist_initialization_empty(self):
+        """Test that blacklist is initialized as empty set."""
+        crawler = WebCrawler()
+        assert isinstance(crawler.blacklist_domains, set)
+        assert len(crawler.blacklist_domains) == 0
+    
+    def test_blacklist_initialization_with_domains(self):
+        """Test that blacklist can be initialized with domains."""
+        initial_blacklist = {"example.com", "blocked.org"}
+        crawler = WebCrawler(blacklist_domains=initial_blacklist)
+        assert crawler.blacklist_domains == initial_blacklist
+    
+    @patch("researcher.web_crawler.requests.get")
+    def test_crawl_url_skips_blacklisted_domain(self, mock_get):
+        """Test that crawl_url skips blacklisted domains without making requests."""
+        crawler = WebCrawler(blacklist_domains={"example.com"})
+        
+        content = crawler.crawl_url("https://example.com/page")
+        
+        assert content is None
+        mock_get.assert_not_called()  # リクエストしない
+    
+    @patch("researcher.web_crawler.requests.get")
+    def test_crawl_url_adds_to_blacklist_on_exception(self, mock_get):
+        """Test that failed domain is added to blacklist on exception."""
+        mock_get.side_effect = Exception("Connection error")
+        crawler = WebCrawler()
+        
+        content = crawler.crawl_url("https://paywall.com/article")
+        
+        assert content is None
+        assert "paywall.com" in crawler.blacklist_domains
+    
+    @patch("researcher.web_crawler.requests.get")
+    def test_crawl_url_adds_to_blacklist_on_empty_content(self, mock_get):
+        """Test that domain is blacklisted when content is empty."""
+        mock_response = MagicMock()
+        mock_response.text = "<html><body></body></html>"  # 空コンテンツ
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+        
+        crawler = WebCrawler()
+        content = crawler.crawl_url("https://empty.com/page")
+        
+        assert content is None
+        assert "empty.com" in crawler.blacklist_domains
+    
+    def test_crawl_results_tracks_failed_domains(self):
+        """Test that crawl_results tracks failed domains and success rate."""
+        crawler = WebCrawler()
+        results = [
+            {"url": "https://success.com/page"},
+            {"url": "https://fail1.com/page"},
+            {"url": "https://fail2.com/page"},
+        ]
+        
+        with patch.object(crawler, "crawl_url") as mock_crawl:
+            # 1成功、2失敗（失敗時にブラックリスト追加をシミュレート）
+            def side_effect(url):
+                if "fail" in url:
+                    domain = urlparse(url).netloc
+                    crawler.blacklist_domains.add(domain)
+                    return None
+                return "Success content"
+            
+            mock_crawl.side_effect = side_effect
+            result = crawler.crawl_results(results, max_urls=3)
+        
+        assert result["total_attempts"] == 3
+        assert result["successful_crawls"] == 1
+        assert pytest.approx(result["success_rate"], 0.01) == 1/3
+        assert "fail1.com" in result["failed_domains"]
+        assert "fail2.com" in result["failed_domains"]
+        assert len(result["content"]) == 1
+    
+    def test_crawl_results_all_failures(self):
+        """Test crawl_results when all URLs fail."""
+        crawler = WebCrawler()
+        results = [{"url": "https://fail.com/1"}, {"url": "https://fail.com/2"}]
+        
+        with patch.object(crawler, "crawl_url", return_value=None):
+            result = crawler.crawl_results(results, max_urls=2)
+        
+        assert result["success_rate"] == 0.0
+        assert result["successful_crawls"] == 0
+        assert len(result["content"]) == 0
+        assert result["total_attempts"] == 2

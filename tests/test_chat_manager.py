@@ -306,7 +306,11 @@ def test_chat_manager_crawls_on_search():
     
     # Mock crawler
     mock_crawler.crawl_results.return_value = {
-        "https://example.com": "Crawled content",
+        "content": {"https://example.com": "Crawled content"},
+        "failed_domains": set(),
+        "success_rate": 1.0,
+        "total_attempts": 1,
+        "successful_crawls": 1
     }
     mock_crawler.format_crawled_content.return_value = "[Web Content]\nCrawled content"
     
@@ -394,7 +398,11 @@ def test_search_updates_citation_snippets_with_crawled_content():
     
     # クロール結果
     mock_crawler.crawl_results.return_value = {
-        "https://example.com": "Detailed crawled content from the webpage..."
+        "content": {"https://example.com": "Detailed crawled content from the webpage..."},
+        "failed_domains": set(),
+        "success_rate": 1.0,
+        "total_attempts": 1,
+        "successful_crawls": 1
     }
     mock_crawler.format_crawled_content.return_value = "[Web Content]\nDetailed content"
     
@@ -462,7 +470,11 @@ def test_end_to_end_search_crawl_citation_response():
     
     # クロール結果
     mock_crawler.crawl_results.return_value = {
-        "https://news.com/article": "Full article content with detailed information..."
+        "content": {"https://news.com/article": "Full article content with detailed information..."},
+        "failed_domains": set(),
+        "success_rate": 1.0,
+        "total_attempts": 1,
+        "successful_crawls": 1
     }
     mock_crawler.format_crawled_content.return_value = "[Web Content]\nhttps://news.com/article:\nFull article content..."
     
@@ -518,9 +530,15 @@ def test_citation_mapping_with_add_citation_failure():
     
     # クロール結果
     mock_crawler.crawl_results.return_value = {
-        "https://url1.com": "Crawled content for URL 1",
-        "https://url2.com": "Crawled content for URL 2",
-        "https://url3.com": "Crawled content for URL 3",
+        "content": {
+            "https://url1.com": "Crawled content for URL 1",
+            "https://url2.com": "Crawled content for URL 2",
+            "https://url3.com": "Crawled content for URL 3",
+        },
+        "failed_domains": set(),
+        "success_rate": 1.0,
+        "total_attempts": 3,
+        "successful_crawls": 3
     }
     mock_crawler.format_crawled_content.return_value = "[Web Content]..."
     

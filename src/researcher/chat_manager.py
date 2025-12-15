@@ -157,7 +157,20 @@ class ChatManager:
         self.last_search_turns_remaining = 0  # Reset turns counter
         if self.web_crawler and results:
             try:
-                crawled_content = self.web_crawler.crawl_results(results, max_urls=3)
+                crawl_result = self.web_crawler.crawl_results(results, max_urls=3)
+                crawled_content = crawl_result["content"]
+                
+                # Log crawl statistics
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(
+                    "Crawl stats: %d/%d successful (%.1f%%), failed domains: %s",
+                    crawl_result["successful_crawls"],
+                    crawl_result["total_attempts"],
+                    crawl_result["success_rate"] * 100,
+                    crawl_result["failed_domains"]
+                )
+                
                 if crawled_content:
                     self.last_search_content = self.web_crawler.format_crawled_content(crawled_content)
                     # Set to 1 turn to inject crawled content for the next response only
