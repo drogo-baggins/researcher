@@ -6,6 +6,7 @@ leveraging the same backend components (ChatManager, OllamaClient, SearXNGClient
 as the CLI interface.
 """
 
+import logging
 import streamlit as st
 from researcher.chat_manager import ChatManager
 from researcher.citation_manager import CitationManager
@@ -22,6 +23,8 @@ from researcher.config import (
     ensure_ollama_running,
     ensure_searxng_running,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 def initialize_session():
@@ -136,10 +139,10 @@ def render_sidebar():
         # Handle session switch
         if selected_id != current_id:
             if selected_id is None:
-                # New session
+                # New session: clear history while keeping system messages
                 st.session_state.current_session_id = None
                 st.session_state.messages = []
-                st.session_state.chat_manager.messages = []
+                st.session_state.chat_manager.clear_history(keep_system=True, clear_citations=True)
             else:
                 # Load existing session
                 session_data = st.session_state.session_manager.load_session(selected_id)
@@ -148,8 +151,20 @@ def render_sidebar():
                     st.session_state.messages = session_data["history"]
                     st.session_state.model = session_data["model"]
                     st.session_state.language = session_data["language"]
-                    # Restore ChatManager history
+                    
+                    # Sync ChatManager with loaded session configuration (Comment 1)
                     st.session_state.chat_manager.messages = session_data["history"]
+                    st.session_state.chat_manager.language = session_data["language"]
+                    st.session_state.chat_manager.ollama_client.model = session_data["model"]
+                    st.session_state.chat_manager.reranker.ollama_client.model = session_data["model"]
+                    
+                    # Recreate agent with loaded language if it exists
+                    if st.session_state.chat_manager.agent:
+                        st.session_state.chat_manager.agent = QueryAgent(
+                            st.session_state.chat_manager.ollama_client,
+                            language=session_data["language"]
+                        )
+                    
                     st.rerun()
         
         # Session action buttons
@@ -163,16 +178,24 @@ def render_sidebar():
                 if new_id:
                     st.session_state.current_session_id = new_id
                     st.session_state.messages = []
-                    st.session_state.chat_manager.messages = []
+                    # Clear ChatManager history while keeping system messages (Comment 2)
+                    st.session_state.chat_manager.clear_history(keep_system=True, clear_citations=True)
                     st.rerun()
         
         with col2:
             if st.button("🗑️ 削除", disabled=(current_id is None), key="delete_session_btn"):
-                st.session_state.session_manager.delete_session(current_id)
-                st.session_state.current_session_id = None
-                st.session_state.messages = []
-                st.session_state.chat_manager.messages = []
-                st.rerun()
+                # Capture deletion result and handle errors (Comment 3)
+                deleted = st.session_state.session_manager.delete_session(current_id)
+                if deleted:
+                    st.session_state.current_session_id = None
+                    st.session_state.messages = []
+                    # Clear ChatManager history while keeping system messages (Comment 2)
+                    st.session_state.chat_manager.clear_history(keep_system=True, clear_citations=True)
+                    st.rerun()
+                else:
+                    # Show error if deletion failed (Comment 3)
+                    st.error(f"セッション削除に失敗しました (ID: {current_id})")
+                    LOGGER.warning(f"Failed to delete session {current_id}")
         
         # Session search
         search_query = st.text_input("🔍 セッション検索", placeholder="キーワードで検索...", key="session_search")
