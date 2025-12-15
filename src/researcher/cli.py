@@ -313,9 +313,26 @@ def main():
                         if len(parts) < 3:
                             print("使用法: /blacklist add <domain>")
                             continue
-                        domain = parts[2].strip()
-                        web_crawler.add_to_blacklist(domain)
-                        print(f"[ブラックリストに追加: {domain}]")
+                        target = parts[2].strip()
+                        if not target:
+                            print("ドメイン名を指定してください")
+                            continue
+                        
+                        # Normalize domain from URL or domain string
+                        from urllib.parse import urlparse
+                        if "://" in target or "/" in target:
+                            # Parse as URL
+                            parsed = urlparse(target if "://" in target else f"http://{target}")
+                            normalized_domain = parsed.netloc
+                        else:
+                            normalized_domain = target
+                        
+                        if not normalized_domain:
+                            print("ドメイン名を指定してください")
+                            continue
+                        
+                        web_crawler.add_to_blacklist(normalized_domain)
+                        print(f"[ブラックリストに追加: {normalized_domain}]")
                     
                     elif subcommand == "clear":
                         confirm = input("ブラックリストをクリアしますか？ (yes/no): ").strip().lower()

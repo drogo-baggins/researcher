@@ -352,17 +352,19 @@ cat docs/mcp-setup.md
    ```bash
    ./run.sh --auto-search-default
    You: 最新の経済ニュースは？
-   [クロール失敗: wsj.com が自動的にブラックリストに追加されました]
+   [検索実行中...クロール失敗時は自動的にブラックリストに追加されます]
    ```
+   失敗したドメインはログに記録され、ブラックリストファイル（`~/.researcher/blacklist.json`）に自動保存されます。次回検索時から該当ドメインはスキップされます。
 
 2. **手動ブラックリスト追加**: 問題のあるドメインを事前に追加
    ```bash
    You: /blacklist add wsj.com
    [ブラックリストに追加: wsj.com]
    
-   You: /blacklist add nytimes.com
+   You: /blacklist add https://nytimes.com/news
    [ブラックリストに追加: nytimes.com]
    ```
+   URL形式での指定も対応しており、自動的にドメイン部分を抽出して追加されます。
 
 3. **ブラックリスト確認**:
    ```bash

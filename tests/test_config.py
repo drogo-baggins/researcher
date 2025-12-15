@@ -104,3 +104,37 @@ def test_save_blacklist_domains_creates_directory():
             # Verify directory structure was created
             assert temp_path.parent.exists()
             assert temp_path.exists()
+
+
+def test_load_blacklist_domains_with_mixed_types():
+    """Test that load_blacklist_domains filters out non-string items."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        import json
+        json.dump(["wsj.com", 123, "example.com", None, "test.com"], f)
+        temp_path = f.name
+    
+    try:
+        with patch("researcher.config.BLACKLIST_FILE_PATH", Path(temp_path)):
+            result = load_blacklist_domains()
+            # Only string entries should be loaded
+            assert result == {"wsj.com", "example.com", "test.com"}
+            assert 123 not in result
+            assert None not in result
+    finally:
+        Path(temp_path).unlink()
+
+
+def test_load_blacklist_domains_strips_whitespace():
+    """Test that load_blacklist_domains strips whitespace from entries."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        import json
+        json.dump(["  example.com  ", "test.com", "  "], f)
+        temp_path = f.name
+    
+    try:
+        with patch("researcher.config.BLACKLIST_FILE_PATH", Path(temp_path)):
+            result = load_blacklist_domains()
+            # Whitespace should be stripped, empty entries ignored
+            assert result == {"example.com", "test.com"}
+    finally:
+        Path(temp_path).unlink()

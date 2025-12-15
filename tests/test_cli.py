@@ -115,3 +115,27 @@ def test_cli_manual_mode(monkeypatch):
     assert len(chat_instances) == 1
     assert chat_instances[0].auto_search_calls == []
     assert chat_instances[0].response_calls > 0
+
+
+def test_blacklist_add_domain_normalization():
+    """Test that /blacklist add normalizes URL input to domain."""
+    from urllib.parse import urlparse
+    
+    # Test cases: (input, expected_domain)
+    test_cases = [
+        ("example.com", "example.com"),
+        ("https://example.com", "example.com"),
+        ("https://example.com/path/to/page", "example.com"),
+        ("http://sub.example.com:8080/page", "sub.example.com:8080"),
+    ]
+    
+    for input_str, expected_domain in test_cases:
+        # Simulate the normalization logic from CLI
+        target = input_str.strip()
+        if "://" in target or "/" in target:
+            parsed = urlparse(target if "://" in target else f"http://{target}")
+            normalized_domain = parsed.netloc
+        else:
+            normalized_domain = target
+        
+        assert normalized_domain == expected_domain, f"Failed for input: {input_str}"

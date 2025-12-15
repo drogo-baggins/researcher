@@ -8,14 +8,17 @@ class TestWebCrawler:
     """Test WebCrawler functionality."""
     
     def setup_method(self):
-        """Setup before each test: mock load_blacklist_domains to prevent file I/O."""
-        self.patcher = patch("researcher.web_crawler.load_blacklist_domains")
-        self.mock_load = self.patcher.start()
+        """Setup before each test: mock load_blacklist_domains and save_blacklist_domains to prevent file I/O."""
+        self.patcher_load = patch("researcher.web_crawler.load_blacklist_domains")
+        self.patcher_save = patch("researcher.web_crawler.save_blacklist_domains")
+        self.mock_load = self.patcher_load.start()
+        self.mock_save = self.patcher_save.start()
         self.mock_load.return_value = set()
     
     def teardown_method(self):
         """Cleanup after each test."""
-        self.patcher.stop()
+        self.patcher_load.stop()
+        self.patcher_save.stop()
     
     def test_crawl_results_returns_dict(self):
         """Test that crawl_results returns a dictionary with correct structure."""

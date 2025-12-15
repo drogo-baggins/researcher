@@ -243,14 +243,25 @@ BLACKLIST_FILE_PATH = Path.home() / ".researcher" / "blacklist.json"
 
 
 def load_blacklist_domains() -> set:
-    """Load blacklist domains from JSON file."""
+    """Load blacklist domains from JSON file, filtering to string-only entries."""
     if not BLACKLIST_FILE_PATH.exists():
         return set()
     try:
         with open(BLACKLIST_FILE_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
             if isinstance(data, list):
-                return set(data)
+                domains = set()
+                has_invalid_items = False
+                for item in data:
+                    if isinstance(item, str):
+                        cleaned = item.strip()
+                        if cleaned:
+                            domains.add(cleaned)
+                    else:
+                        has_invalid_items = True
+                if has_invalid_items:
+                    logging.warning("ブラックリスト JSON に無効な型が含まれています。文字列のみを使用します")
+                return domains
     except Exception as exc:
         logging.warning("ブラックリスト読み込みエラー: %s", exc)
     return set()
