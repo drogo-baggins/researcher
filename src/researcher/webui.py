@@ -231,7 +231,7 @@ def render_sidebar():
             model = st.selectbox(
                 "Ollamaモデル",
                 options=available_models,
-                index=available_models.index(current_model) if current_model in available_models else 0,
+                index=available_models.index(current_model),
                 help="実行するOllamaモデルを選択",
                 key="model_selector"
             )
