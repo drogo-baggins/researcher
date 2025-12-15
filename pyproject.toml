@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "researcher"
+version = "0.1.0"
+requires-python = ">=3.8"
+dependencies = [
+    "ollama>=0.6.0",
+    "requests>=2.31.0",
+    "python-dateutil>=2.8.0",
+    "mcp>=1.0.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=4.9.0"
+]
+
+[project.scripts]
+researcher = "researcher.cli:main"

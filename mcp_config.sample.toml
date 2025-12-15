@@ -1,0 +1,22 @@
+# MCP サーバー設定サンプル (コメント付き)
+# command: 実行するバイナリ
+# args: MCP サーバーに渡す引数（パスやオプション）
+# enabled: true にすると接続対象になる
+
+[filesystem]
+command = "node"
+args = [
+  "/usr/local/lib/node_modules/@modelcontextprotocol/server-filesystem/build/index.js",
+  "/Users/username/Documents"
+]
+enabled = true
+
+[notes]
+command = "node"
+args = ["/path/to/mcp-apple-notes/build/index.js"]
+enabled = true
+
+[calendar]
+command = "node"
+args = ["/usr/local/lib/node_modules/mcp-ical/index.js"]
+enabled = false
