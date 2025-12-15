@@ -1,7 +1,7 @@
 import json
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from researcher.ollama_client import OllamaClient
 
@@ -76,7 +76,7 @@ class QueryAgent:
         return {"needs_search": False, "keywords": [], "reasoning": "分析に失敗しました。"}
 
     def generate_retry_query(
-        self, original_query: str, failed_domains: set, previous_keywords: List[str]
+        self, original_query: str, failed_domains: set, previous_keywords: Optional[List[str]] = None
     ) -> str:
         """
         Generate alternative search query to retry with different sources.
@@ -85,11 +85,14 @@ class QueryAgent:
         Args:
             original_query: The original search query
             failed_domains: Set of domains that failed during crawling
-            previous_keywords: Keywords extracted from previous search
+            previous_keywords: Keywords extracted from previous search (optional)
         
         Returns:
             New search query string, or original_query on failure
         """
+        if previous_keywords is None:
+            previous_keywords = []
+        
         if self.language == "ja":
             prompt = (
                 f"前回の検索でクロールに失敗したドメイン: {', '.join(failed_domains) if failed_domains else '（なし）'}。\n"

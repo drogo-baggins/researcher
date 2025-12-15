@@ -115,7 +115,7 @@ class ChatManager:
 
         return stream()
 
-    def search(self, query: str, *, use_reranker: bool = True, **kwargs: Any) -> Dict[str, Any]:
+    def search(self, query: str, *, use_reranker: bool = True, previous_keywords: Optional[List[str]] = None, **kwargs: Any) -> Dict[str, Any]:
         if not self.searxng_client:
             raise RuntimeError("検索機能が有効化されていません")
 
@@ -177,7 +177,8 @@ class ChatManager:
                 if crawl_result["success_rate"] < 0.5 and self.agent and crawl_result["failed_domains"]:
                     logger.info("Low success rate (%.1f%%), attempting retry searches...", crawl_result["success_rate"] * 100)
                     
-                    # Result consolidation using URL as key to deduplicate
+                    # Result consolidation: preserve URL-less results and deduplicate URL-bearing items
+                    url_less_results = [r for r in results if not r.get("url")]
                     all_results = {r.get("url"): r for r in results if r.get("url")}
                     retry_count = 0
                     max_retries = 3
@@ -185,7 +186,7 @@ class ChatManager:
                     while retry_count < max_retries and crawl_result["success_rate"] < 0.5:
                         retry_count += 1
                         retry_query = self.agent.generate_retry_query(
-                            query, crawl_result["failed_domains"], []
+                            query, crawl_result["failed_domains"], previous_keywords or []
                         )
                         logger.info("Retry %d/%d with query: %s", retry_count, max_retries, retry_query)
                         
@@ -212,13 +213,33 @@ class ChatManager:
                             if self.web_crawler:
                                 retry_crawl = self.web_crawler.crawl_results(list(all_results.values()), max_urls=5)
                                 crawl_result = retry_crawl  # Update with latest success rate
+                                crawled_content = retry_crawl["content"]  # Update with consolidated crawl content
                                 logger.info("Retry %d success rate: %.1f%%", retry_count, crawl_result["success_rate"] * 100)
                         except Exception as exc:
                             logger.warning("Retry %d failed: %s", retry_count, exc)
                     
-                    # Reflect consolidated results back to results list
-                    results = list(all_results.values())
+                    # Reflect consolidated results back to results list (URL-bearing + URL-less)
+                    results = list(all_results.values()) + url_less_results
                     logger.info("Final integrated results: %d items", len(results))
+                    
+                    # Ensure all results have citations
+                    if self.citation_manager:
+                        for result in results:
+                            if "_citation_id" not in result:
+                                try:
+                                    citation_id = self.citation_manager.add_citation(
+                                        url=result.get("url", ""),
+                                        title=result.get("title", ""),
+                                        snippet=result.get("snippet", ""),
+                                        date_str=result.get("published_date"),
+                                        relevance_score=result.get("score", 0.5),
+                                    )
+                                    result["_citation_id"] = citation_id
+                                    self.current_citation_ids.append(citation_id)
+                                except Exception:
+                                    # Citation追加に失敗してもサーチ全体は続行
+                                    continue
+
                 
                 if crawled_content:
                     self.last_search_content = self.web_crawler.format_crawled_content(crawled_content)
@@ -238,6 +259,11 @@ class ChatManager:
             except Exception:
                 # Web crawling failure is non-critical, continue without it
                 pass
+        
+        # Update payload with consolidated results
+        if self.web_crawler and crawl_result and crawl_result["success_rate"] < 0.5:
+            # If retry happened, update payload results field
+            payload["results"] = results
         
         formatted = self._format_search_results(query, results)
         self.add_system_message(formatted, search_result=True)
@@ -269,7 +295,7 @@ class ChatManager:
             # キーワードなしの場合は元のクエリを使用
             search_query = query
         
-        search_result = self.search(search_query)
+        search_result = self.search(search_query, previous_keywords=keywords)
         return {
             "searched": True,
             "formatted": search_result["formatted"],
