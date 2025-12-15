@@ -217,13 +217,16 @@ def render_chat():
 
 def render_citations():
     """Render citations in the sidebar if any exist."""
-    if st.session_state.chat_manager.current_citation_ids:
+    chat_manager = st.session_state.chat_manager
+    citation_ids = getattr(chat_manager, "current_citation_ids", [])
+    
+    if citation_ids:
         with st.sidebar:
             st.divider()
             st.subheader("📖 参照")
             
-            for cid in st.session_state.chat_manager.current_citation_ids:
-                citation = st.session_state.chat_manager.citation_manager.get_citation(cid)
+            for cid in citation_ids:
+                citation = chat_manager.citation_manager.get_citation(cid)
                 if citation:
                     with st.expander(f"[{cid}] {citation['title'][:50]}..."):
                         st.markdown(f"**URL**: {citation['url']}")

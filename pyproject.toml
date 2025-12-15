@@ -18,4 +18,4 @@ dependencies = [
 
 [project.scripts]
 researcher = "researcher.cli:main"
-researcher-webui = "researcher.webui:main"
+researcher-webui = "researcher.webui_launcher:main"
