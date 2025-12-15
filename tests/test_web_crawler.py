@@ -317,3 +317,68 @@ class TestWebCrawler:
                 
                 assert "example.com" in crawler.blacklist_domains
                 mock_save.assert_called_once_with({"example.com"})
+    
+    def test_domain_normalization(self):
+        """Test that domain normalization works correctly."""
+        from researcher.web_crawler import normalize_domain
+        
+        assert normalize_domain("WSJ.com") == "wsj.com"
+        assert normalize_domain("www.example.com") == "example.com"
+        assert normalize_domain("WWW.EXAMPLE.COM") == "example.com"
+        assert normalize_domain("sub.example.com") == "sub.example.com"
+        assert normalize_domain("  example.com  ") == "example.com"
+    
+    def test_crawl_url_with_www_domain(self):
+        """Test that crawl_url normalizes www. prefix in domain."""
+        with patch("researcher.web_crawler.load_blacklist_domains", return_value={"example.com"}):
+            with patch("researcher.web_crawler.save_blacklist_domains"):
+                crawler = WebCrawler()
+                
+                # www.example.com should be blacklisted if example.com is
+                result = crawler.crawl_url("https://www.example.com/page")
+                assert result is None
+    
+    def test_add_to_blacklist_normalizes_input(self):
+        """Test that add_to_blacklist normalizes domain input."""
+        with patch("researcher.web_crawler.load_blacklist_domains", return_value=set()):
+            with patch("researcher.web_crawler.save_blacklist_domains") as mock_save:
+                crawler = WebCrawler()
+                
+                # Add www.WSJ.COM, should be normalized to wsj.com
+                crawler.add_to_blacklist("www.WSJ.COM")
+                assert "wsj.com" in crawler.blacklist_domains
+                mock_save.assert_called_once_with({"wsj.com"})
+    
+    def test_crawl_results_normalizes_failed_domains(self):
+        """Test that crawl_results normalizes domains in failed_domains set.
+        
+        This ensures that failed domains with www. prefix or uppercase characters
+        are stored in normalized form matching self.blacklist_domains, making
+        logged failures and QueryAgent.generate_retry_query() fully consistent.
+        """
+        crawler = WebCrawler()
+        results = [
+            {"url": "https://WWW.EXAMPLE.COM/page"},
+            {"url": "https://www.fail.com/page"},
+        ]
+        
+        with patch.object(crawler, "crawl_url") as mock_crawl:
+            def side_effect(url):
+                if "www.fail.com" in url.lower():
+                    # Simulate failure adding to blacklist
+                    domain = "www.fail.com"
+                    crawler.blacklist_domains.add("fail.com")  # normalize_domain applied
+                    return None
+                return "Success content"
+            
+            mock_crawl.side_effect = side_effect
+            result = crawler.crawl_results(results, max_urls=2)
+        
+        # Verify failed_domains contains normalized form
+        assert result["successful_crawls"] == 1
+        assert len(result["failed_domains"]) == 1
+        # Should be normalized to lowercase, www. stripped
+        assert "fail.com" in result["failed_domains"]
+        # Should NOT contain uppercase or www. prefix
+        assert "www.fail.com" not in result["failed_domains"]
+        assert "FAIL.COM" not in result["failed_domains"]

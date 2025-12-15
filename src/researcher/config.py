@@ -51,10 +51,11 @@ def get_embedding_model(cli_arg: Optional[str] = None) -> str:
 
 
 def get_relevance_threshold(cli_arg: Optional[float] = None) -> float:
-    """Resolve relevance threshold: CLI > env > default.
+    """Resolve relevance threshold: CLI > env > default (0.5).
     
-    デフォルトは 0.0（すべての結果を返す）です。
-    高いしきい値を設定するとEmbedding検索が成功した場合に結果がフィルタリングされます。
+    The default is 0.5, which provides a balanced filtering of embedding search results.
+    When set to 0.0, all results are returned without filtering.
+    Higher values (e.g., 0.8) provide stricter relevance filtering.
     """
     if cli_arg is not None:
         return cli_arg

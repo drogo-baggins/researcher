@@ -55,6 +55,16 @@ def test_get_relevance_threshold_resolution():
     assert get_relevance_threshold(0.9) == 0.9
 
 
+def test_get_relevance_threshold_default_value():
+    """Test that default relevance_threshold is 0.5, not 0.0."""
+    with patch.dict(os.environ, {}, clear=True):
+        threshold = get_relevance_threshold()
+        # Verify default is 0.5 (meaning: return results with 50% relevance or higher)
+        # 0.0 would mean "return all results" but that's not the intended behavior
+        assert threshold == 0.5
+        assert threshold == DEFAULT_RELEVANCE_THRESHOLD
+
+
 def test_load_blacklist_domains_empty():
     """Test loading blacklist when file doesn't exist."""
     with patch("researcher.config.BLACKLIST_FILE_PATH", Path("/nonexistent/path/blacklist.json")):

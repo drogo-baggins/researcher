@@ -68,7 +68,7 @@ def main():
     parser.add_argument(
         "--relevance-threshold",
         type=float,
-        help="埋め込み再ランクの関連性閾値 (デフォルト: 0.0)",
+        help="埋め込み再ランクの関連性閾値 (デフォルト: 0.5)",
         default=None,
     )
     parser.add_argument(
@@ -166,7 +166,10 @@ def main():
     if auto_search_enabled and searxng_client is None:
         print("[WARN] SearXNGが利用できないため、自動検索モードを無効化します。")
         auto_search_enabled = False
-    agent = QueryAgent(client, language=agent_language) if auto_search_enabled else None
+    
+    # Agent作成: auto_search_enabledから分離。SearXNGが利用可能なら常に作成
+    # これにより、manual /search コマンドでも retry ロジックが使用可能になる
+    agent = QueryAgent(client, language=agent_language) if searxng_client else None
 
     mcp_client = None
     if args.enable_mcp or args.mcp_config:
@@ -197,12 +200,9 @@ def main():
     chat.add_system_message("You are a helpful assistant.")
 
     print("researcher CLI (Ollama)")
-    # Display Perplexica WebUI URL
-    perplexica_url = os.environ.get("PERPLEXICA_URL", "http://localhost:3000")
-    print(f"Perplexica WebUI: {perplexica_url} (画像・スタイル付き回答はWebUIで確認)")
     print("/exit で終了, /clear で履歴クリア, /history で履歴表示, /search <query> でSearXNG検索")
     print("/blacklist [show|add|clear] でドメインブラックリスト管理")
-    print("/perplexica-url でWebUI URL表示, /sync-status で同期確認")
+    print("/status でOllama/SearXNG接続確認")
     if auto_search_enabled:
         print("自動検索モード: 有効（最新情報が必要な質問を自動検知）")
     if mcp_client:
@@ -218,7 +218,7 @@ def main():
                 # Auto-detect language from first user input if not explicitly set
                 if first_input and not language_explicitly_set and os.environ.get("AGENT_LANGUAGE") is None:
                     detected_language = detect_language_from_text(user_input)
-                    if detected_language != agent_language and auto_search_enabled:
+                    if detected_language != agent_language and agent is not None:
                         agent_language = detected_language
                         # Update agent with new language
                         agent = QueryAgent(client, language=agent_language)
@@ -236,13 +236,8 @@ def main():
                     for m in chat.get_history():
                         print(f"[{m['role']}] {m['content']}")
                     continue
-                elif user_input == "/perplexica-url":
-                    perplexica_url = os.environ.get("PERPLEXICA_URL", "http://localhost:3000")
-                    print(f"Perplexica WebUI: {perplexica_url}")
-                    print(f"ブラウザで開くには: open {perplexica_url}")
-                    continue
-                elif user_input == "/sync-status":
-                    print("[同期ステータス確認]")
+                elif user_input == "/status":
+                    print("[接続ステータス確認]")
                     # Ollama connection check
                     try:
                         ollama_ok = client.test_connection()
@@ -260,27 +255,6 @@ def main():
                     else:
                         print("  SearXNG: - 未設定")
                     
-                    # Perplexica connection check
-                    perplexica_url = os.environ.get("PERPLEXICA_URL", "http://localhost:3000")
-                    try:
-                        try:
-                            import requests
-                        except ImportError:
-                            print("  Perplexica WebUI: ⚠ チェック不可 (requests パッケージが必要)")
-                            print("\n  推奨: すべて ✓ の場合、CLI と WebUI は同期しています")
-                            continue
-                        
-                        resp = requests.get(perplexica_url, timeout=3)
-                        # 2xx, 3xx status codes indicate successful connection
-                        perplexica_ok = 200 <= resp.status_code < 400
-                        status_info = f" (HTTP {resp.status_code})" if not perplexica_ok else ""
-                        print(f"  Perplexica WebUI: {'✓ 接続OK' if perplexica_ok else '✗ 接続失敗'}{status_info}")
-                    except ImportError:
-                        print("  Perplexica WebUI: ⚠ チェック不可 (requests パッケージが必要)")
-                    except Exception as e:
-                        print(f"  Perplexica WebUI: ✗ 接続失敗 ({type(e).__name__})")
-                    
-                    print("\n  推奨: すべて ✓ の場合、CLI と WebUI は同期しています")
                     continue
                 elif user_input.startswith("/search"):
                     query = user_input[len("/search"):].strip()
@@ -320,12 +294,13 @@ def main():
                         
                         # Normalize domain from URL or domain string
                         from urllib.parse import urlparse
+                        from researcher.web_crawler import normalize_domain
                         if "://" in target or "/" in target:
                             # Parse as URL
                             parsed = urlparse(target if "://" in target else f"http://{target}")
-                            normalized_domain = parsed.netloc
+                            normalized_domain = normalize_domain(parsed.netloc)
                         else:
-                            normalized_domain = target
+                            normalized_domain = normalize_domain(target)
                         
                         if not normalized_domain:
                             print("ドメイン名を指定してください")

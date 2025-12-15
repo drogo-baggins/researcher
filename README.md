@@ -50,6 +50,20 @@ You: 最新のAIニュースは？
 
 ---
 
+## 🎨 Streamlit WebUI（開発中）
+
+researcher は将来的に **Streamlit ベースの WebUI** を提供予定です。以下の機能を実装予定：
+
+- 📊 **インタラクティブなチャットインターフェース**: ブラウザベースの対話型UI
+- 💾 **セッション履歴管理**: 過去の会話を保存・検索・再開
+- 🔄 **動的モデル切り替え**: UIからOllamaモデルをリアルタイム変更
+- 🌐 **多言語対応**: セッションごとに日本語/英語を設定
+- 📈 **引用の可視化**: 信頼性スコア付き引用をグラフィカルに表示
+
+現在はCLI版をご利用ください。WebUI実装の進捗は今後のリリースでお知らせします。
+
+---
+
 ## 📖 ハンズオンガイド：5つのユースケース
 
 ### ユースケース 1: 政治・社会ニュース調査
@@ -162,31 +176,7 @@ You: 2025年のPythonのテストのベストプラクティスは？
 [2] PEP 484+ Type Hints Guide
 ```
 
----
 
-## 🎨 WebUI 専用ユースケース
-
-### ユースケース 6: 画像付き検索結果の確認
-
-**シナリオ**: 最新のAIモデルのアーキテクチャ図を探す
-
-1. ブラウザで `http://localhost:3000` を開く
-2. クエリ入力: `Transformer architecture diagram 2025`
-3. 結果: 検索結果に画像サムネイルが表示され、クリックで拡大表示
-4. **CLI との違い**: CLI では画像URLのみ表示されるが、WebUI では直接プレビュー可能
-
-このユースケースはビジュアルが重要な技術文書の学習に最適です。
-
-### ユースケース 7: スタイル付き技術ドキュメント
-
-**シナリオ**: Pythonのコードサンプルを含む回答を見やすく表示
-
-1. WebUI でクエリ: `Python async/await best practices with examples`
-2. 結果: コードブロックがシンタックスハイライト付きで表示
-3. 引用リンクがクリック可能で、ホバーでプレビュー表示
-4. **CLI との違い**: 同じ内容がプレーンテキストで表示
-
-このユースケースは複雑な技術内容を視覚的に整理して学ぶのに最適です。
 
 ---
 
@@ -237,8 +227,6 @@ export OLLAMA_URL=http://localhost:11434 # Ollamaサーバー
 # SearXNG設定
 export SEARXNG_URL=http://localhost:8888 # SearXNGサーバー
 
-# Perplexica WebUI設定
-export PERPLEXICA_URL=http://localhost:3000  # WebUI URL（カスタムポート時に変更）
 
 # Agent設定
 export AGENT_LANGUAGE=en                  # QueryAgent言語（ja/en）
@@ -267,8 +255,7 @@ source ~/.zshrc
 | `/blacklist [show\|add\|clear]` | ドメインブラックリスト管理 | `/blacklist add wsj.com` |
 | `/history` | 会話履歴を表示 | `/history` |
 | `/clear` | 履歴をクリア | `/clear` |
-| `/perplexica-url` | Perplexica WebUI の URL を表示 | `/perplexica-url` |
-| `/sync-status` | CLI と WebUI の同期状態を確認 | `/sync-status` |
+| `/status` | Ollama/SearXNG接続状態を確認 | `/status` |
 | `/exit` | CLIを終了 | `/exit` |
 
 ---
@@ -389,7 +376,6 @@ cat docs/mcp-setup.md
 
 より詳しい情報は以下をご覧ください：
 
-- **[SearXNG セットアップガイド](docs/perplexica-setup.md)** - SearXNGの構築とカスタマイズ方法
 - **[MCP 統合ガイド](docs/mcp-setup.md)** - MCPサーバーの設定と使用方法
 
 ---
@@ -404,16 +390,32 @@ researcher は検索結果のコンテンツをLLMに提供するための **Web
 
 ```python
 class CustomWebCrawler:
-    def crawl_results(self, results: List[Dict[str, Any]], max_urls: int = 3) -> Dict[str, str]:
+    def crawl_results(
+        self, results: List[Dict[str, Any]], max_urls: int = 3
+    ) -> Dict[str, Any]:
         """
-        検索結果から上位N個のURLをクロールし、コンテンツを抽出します。
+        検索結果から上位N個のURLをクロールし、コンテンツとメタデータを抽出します。
+        
+        このメソッドの戻り値は ChatManager の retry ロジックで使用されるため、
+        必ず以下の構造を返す必要があります。
         
         Args:
             results: 検索結果のリスト（各要素は "url" キーを持つ辞書）
             max_urls: クロール対象の最大URL数
             
         Returns:
-            {URL: 抽出されたコンテンツ, ...} の形式の辞書
+            {
+                "content": Dict[str, str],           # URL -> 抽出されたテキストコンテンツ
+                "failed_domains": Set[str],          # クロール失敗したドメイン
+                "success_rate": float,               # 成功率 (0.0-1.0)
+                "total_attempts": int,               # 試行総数
+                "successful_crawls": int             # 成功したクロール数
+            }
+            
+        ChatManager は success_rate < 0.5 の場合、Agent を使用して
+        alternate query を生成し、失敗したドメインを避けて再検索を試みます。
+        custom implementation でも、これらのフィールドを意味のある値で
+        埋めることで retry ロジックが機能します。
         """
         pass
     
@@ -422,7 +424,7 @@ class CustomWebCrawler:
         クロール結果をLLMコンテキストに注入可能な形式にフォーマットします。
         
         Args:
-            crawled_content: crawl_results() の戻り値
+            crawled_content: crawl_results() の戻り値の "content" フィールド
             
         Returns:
             ユーザーメッセージに追記可能な単一の文字列
@@ -432,14 +434,15 @@ class CustomWebCrawler:
 
 ### 使用例
 
-CLIで `ChatManager` に WebCrawler インスタンスを渡すと、自動的に検索結果から上位3つのURLをクロールし、抽出したコンテンツをLLMに提供します：
+CLIで `ChatManager` に WebCrawler インスタンスを渡すと、自動的に検索結果から上位3つのURLをクロールし、抽出したコンテンツをLLMに提供します。
+失敗率が高い場合（success_rate < 0.5）、Agent が新しいクエリを生成して再検索を試みます：
 
 ```python
 from researcher.web_crawler import WebCrawler
 from researcher.chat_manager import ChatManager
 
 crawler = WebCrawler(timeout=10)
-chat = ChatManager(..., web_crawler=crawler)
+chat = ChatManager(..., web_crawler=crawler, agent=agent)  # agent が retry 時に使用されます
 ```
 
 ---
@@ -485,56 +488,85 @@ chat = ChatManager(..., web_crawler=crawler)
 
 ---
 
-## 🖥️ CLI vs WebUI: どちらを使うべきか？
+## 🖥️ CLI vs WebUI: アーキテクチャと機能差
 
-researcher CLI と Perplexica WebUI は同じバックエンド（Ollama/SearXNG）を共有しますが、UI体験が異なります。以下の比較表を参考に、用途に応じて選択してください：
+### 重要: CLI と WebUI は独立した実装です
 
-| 機能 | researcher CLI | Perplexica WebUI | 推奨シーン |
+researcher CLI と Perplexica WebUI は **同じバックエンド（Ollama/SearXNG）を共有**しますが、**UI ロジック、検索判定、引用管理などは独立して実装**されています。
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ ユーザー入力                                              │
+└──────────────────┬──────────────────────────────────────┘
+                   │
+       ┌───────────┴───────────┐
+       │                       │
+   ┌───▼────────┐         ┌──▼──────────┐
+   │researcher   │         │Perplexica    │
+   │CLI          │         │WebUI         │
+   │(Python)     │         │(Node.js)     │
+   └───┬────────┘         └──┬──────────┘
+       │                       │
+       │ (独立した実装)           │ (独立した実装)
+       │                       │
+   ┌───┴───────────────────┬──┘
+   │                       │
+   │  共有バックエンド:      │
+   │  - Ollama (LLM)      │
+   │  - SearXNG (検索)     │
+   │                       │
+   └───────────────────────┘
+```
+
+### 機能比較表
+
+| 機能 | researcher CLI | Perplexica WebUI | 実装主体 |
 |------|---|---|---|
-| テキスト回答 | ✓ | ✓ | どちらでも |
-| 引用表示 | ✓（Markdown） | ✓（クリック可能） | WebUI（視覚的） |
-| 画像表示 | ✗ | ✓ | WebUI（画像検索時） |
-| スタイル付きテキスト | ✗（プレーンテキスト） | ✓（Markdown レンダリング） | WebUI（読みやすさ） |
-| ストリーミング | ✓ | ✓ | どちらでも |
-| MCP統合 | ✓ | ✗（未対応） | CLI（ローカルファイル操作） |
-| 速度 | 高速 | 中速（ブラウザ描画） | CLI（スクリプト実行） |
-| 起動 | `./run.sh` | `docker compose up` | CLI（軽量） |
+| **基本機能** |
+| テキスト回答 | ✓ | ✓ | 両方（独立） |
+| Web検索 | ✓ | ✓ | 両方（独立） |
+| **researcher 独自機能** |
+| 自動検索判定（Agent） | ✓ | ✗ | researcher CLI のみ |
+| 引用管理・信頼性スコア | ✓ | ✗ | researcher CLI のみ |
+| Web クロール + RAG | ✓ | ✗ | researcher CLI のみ |
+| MCP 統合（ローカルファイル） | ✓ | ✗ | researcher CLI のみ |
+| ブラックリスト管理 | ✓ | ✗ | researcher CLI のみ |
+| **Perplexica 独自機能** |
+| 画像プレビュー | ✗ | ✓ | Perplexica WebUI のみ |
+| UI スタイル（Markdown レンダリング） | ✗ | ✓ | Perplexica WebUI のみ |
+| **両方で利用可能** |
+| ストリーミング応答 | ✓ | ✓ | 両方 |
+| 会話履歴 | ✓ | ✓ | 両方 |
+| マルチターン対話 | ✓ | ✓ | 両方 |
 
 ### 使い分けガイド
 
-**CLI を使う場合**:
+**CLI を使う場合（researcher CLI の機能を活用したい）**:
+- 最新情報が必要な質問に対して自動検索判定を使いたい
+- Web ページのコンテンツをクロールして詳細情報を取得したい
+- 引用の信頼性スコアと出典を確認したい
+- MCP 統合でローカルファイルを読み込む必要がある
 - スクリプト自動化やバッチ処理で検索結果を処理する
-- MCP統合でローカルファイルを読み込む必要がある
-- 高速なテキスト処理が必要
 - ターミナル環境で作業している
 
-**WebUI を使う場合**:
+**WebUI を使う場合（Perplexica WebUI の UI を活用したい）**:
 - 画像を含む検索クエリを実行する（アーキテクチャ図、デザイン例など）
 - 技術ドキュメントのコード例をシンタックスハイライト付きで確認したい
-- 視覚的に洗練された引用表示が欲しい
-- ブラウザから対話的に探索したい
+- 視覚的に洗練されたブラウザ UI で対話したい
+- ブラウザから探索的に情報を検索したい
 
-### CLI と WebUI の同期確認
+### 同期状態について
 
-CLI を起動するたび、以下のメッセージが表示されます：
+CLI と WebUI は**独立した実装**なため、完全に同じ結果が得られるわけではありません。ただし、同じバックエンド（Ollama/SearXNG）を使用しているため、基本的なテキスト応答には大きな差がありません。
 
-```
-researcher CLI (Ollama)
-Perplexica WebUI: http://localhost:3000 (画像・スタイル付き回答はWebUIで確認)
-/exit で終了, /clear で履歴クリア, /history で履歴表示, /search <query> でSearXNG検索
-/perplexica-url でWebUI URL表示, /sync-status で同期確認
-```
-
-同期状態を確認するには、CLI で以下のコマンドを実行します：
+CLI で検索状態を確認するには：
 
 ```
 You: /sync-status
 [同期ステータス確認]
   Ollama: ✓ 接続OK
   SearXNG: ✓ 接続OK
-  Perplexica WebUI: ✓ 接続OK
-
-  推奨: すべて ✓ の場合、CLI と WebUI は同期しています
+  Perplexica WebUI: ✓ 接続OK (参考情報・完全な同期ではありません)
 ```
 
 ---

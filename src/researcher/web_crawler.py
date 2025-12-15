@@ -10,6 +10,22 @@ from researcher.config import load_blacklist_domains, save_blacklist_domains
 LOGGER = logging.getLogger(__name__)
 
 
+def normalize_domain(domain: str) -> str:
+    """
+    Normalize domain by lowercasing and stripping common prefixes.
+    
+    Examples:
+        "WSJ.com" -> "wsj.com"
+        "www.example.com" -> "example.com"
+        "sub.example.com" -> "sub.example.com"
+    """
+    domain = domain.lower().strip()
+    # Remove www. prefix if present
+    if domain.startswith("www."):
+        domain = domain[4:]
+    return domain
+
+
 class WebCrawler:
     """Crawl and extract content from web URLs using BeautifulSoup."""
     
@@ -26,9 +42,9 @@ class WebCrawler:
         Crawl a URL and extract main text content using BeautifulSoup.
         Returns None if crawling fails or domain is blacklisted.
         """
-        # Domain extraction and blacklist check
+        # Domain extraction and normalization
         try:
-            domain = urlparse(url).netloc
+            domain = normalize_domain(urlparse(url).netloc)
         except Exception:
             LOGGER.warning("Failed to parse URL: %s", url)
             return None
@@ -111,7 +127,7 @@ class WebCrawler:
                 # Check if domain was added to blacklist during this crawl
                 if len(self.blacklist_domains) > initial_blacklist_size:
                     try:
-                        domain = urlparse(url).netloc
+                        domain = normalize_domain(urlparse(url).netloc)
                         failed_domains_this_call.add(domain)
                     except Exception:
                         pass
@@ -141,5 +157,6 @@ class WebCrawler:
     
     def add_to_blacklist(self, domain: str) -> None:
         """Manually add domain to blacklist and persist."""
-        self.blacklist_domains.add(domain)
+        normalized = normalize_domain(domain)
+        self.blacklist_domains.add(normalized)
         save_blacklist_domains(self.blacklist_domains)

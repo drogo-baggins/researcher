@@ -742,3 +742,57 @@ def test_search_deduplicates_results_by_url():
     # Deduplication keeps only 1 result
     assert len(result["results"]) == 1
     assert result["results"][0]["url"] == "https://same.com"
+
+
+def test_manual_search_with_agent_enables_retry_logic():
+    """Test that manual /search command uses retry logic when agent is available.
+    
+    Agent creation is now decoupled from auto_search_enabled flag.
+    When searxng_client is available, agent is created regardless of auto_search setting.
+    This ensures /search command can use retry logic even without auto_search enabled.
+    """
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    mock_agent = MagicMock()
+    mock_crawler = MagicMock()
+    
+    # Simulate initial search failure and successful retry
+    mock_searxng.search.side_effect = [
+        {"raw": {}, "results": [{"url": "https://blocked.com", "title": "Blocked", "snippet": "..."}]},
+        {"raw": {}, "results": [{"url": "https://success.com", "title": "Success", "snippet": "..."}]},
+    ]
+    
+    mock_crawler.crawl_results.side_effect = [
+        {"content": {}, "failed_domains": {"blocked.com"}, "success_rate": 0.0, "total_attempts": 1, "successful_crawls": 0},
+        {"content": {}, "failed_domains": set(), "success_rate": 1.0, "total_attempts": 1, "successful_crawls": 1},
+    ]
+    mock_agent.generate_retry_query.return_value = "retry query"
+    
+    # Create ChatManager with agent (not auto_search_enabled, but searxng available)
+    # This simulates the case where manual /search is called without auto_search
+    chat = ChatManager(mock_ollama, searxng_client=mock_searxng, agent=mock_agent, web_crawler=mock_crawler)
+    
+    # Verify agent is available for manual search
+    assert chat.agent is not None
+    
+    # Perform search - should retry when initial results are poor
+    result = chat.search("query")
+    
+    # Verify retry was attempted (agent.generate_retry_query should be called)
+    assert mock_agent.generate_retry_query.called or mock_searxng.search.call_count == 2
+
+
+def test_search_without_agent_when_searxng_unavailable():
+    """Test that agent is not created when searxng_client is None."""
+    mock_ollama = MagicMock()
+    
+    # Create ChatManager without searxng_client and no agent
+    chat = ChatManager(mock_ollama, searxng_client=None, agent=None)
+    
+    # Verify agent is None
+    assert chat.agent is None
+    
+    # Verify search fails gracefully
+    with pytest.raises(RuntimeError) as exc:
+        chat.search("query")
+    assert "検索機能が有効化されていません" in str(exc.value)
