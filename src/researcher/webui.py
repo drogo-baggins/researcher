@@ -60,6 +60,10 @@ def initialize_session():
             st.error(f"❌ Ollama初期化エラー: {e}")
             st.stop()
         
+        # Get available models for dynamic selection (Phase 3)
+        available_models = ollama_client.list_models()
+        st.session_state.available_models = available_models if available_models else []
+        
         # Initialize SearXNG client (optional)
         searxng_client = None
         try:
@@ -214,11 +218,33 @@ def render_sidebar():
         
         # === Configuration Section ===
         st.subheader("🤖 モデル設定")
-        model = st.text_input(
-            "Ollamaモデル",
-            value=st.session_state.get("model", "gpt-oss:20b"),
-            help="実行するOllamaモデル名"
-        )
+        
+        # Dynamic model selection (Phase 3)
+        available_models = st.session_state.get("available_models", [])
+        current_model = st.session_state.get("model", "gpt-oss:20b")
+        
+        if available_models:
+            # Add current model to list if not present (for custom/restored models)
+            if current_model not in available_models:
+                available_models = [current_model] + available_models
+            
+            model = st.selectbox(
+                "Ollamaモデル",
+                options=available_models,
+                index=available_models.index(current_model) if current_model in available_models else 0,
+                help="実行するOllamaモデルを選択",
+                key="model_selector"
+            )
+        else:
+            # Fallback to text input if model list retrieval failed
+            st.warning("⚠️ モデル一覧の取得に失敗しました。手動入力してください。")
+            model = st.text_input(
+                "Ollamaモデル",
+                value=current_model,
+                help="実行するOllamaモデル名",
+                key="model_input"
+            )
+        
         if model != st.session_state.get("model"):
             st.session_state.model = model
             st.session_state.chat_manager.ollama_client.model = model

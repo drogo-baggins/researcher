@@ -1,6 +1,10 @@
 from typing import List, Optional
+import logging
 
 import ollama
+
+LOGGER = logging.getLogger(__name__)
+
 
 class OllamaClient:
     def __init__(self, model: str = "llama3"):
@@ -48,3 +52,18 @@ class OllamaClient:
             return embedding
 
         return []
+
+    def list_models(self) -> List[str]:
+        """利用可能なOllamaモデルの一覧を取得
+        
+        Returns:
+            モデル名のリスト（例: ["llama3:latest", "mixtral:8x7b"]）
+            エラー時は空リスト
+        """
+        try:
+            response = ollama.list()
+            models = response.get("models", [])
+            return [m.get("name", "") for m in models if m.get("name")]
+        except Exception as e:
+            LOGGER.warning(f"モデル一覧の取得に失敗: {e}")
+            return []
