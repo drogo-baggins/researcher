@@ -236,7 +236,12 @@ def main():
                     for m in chat.get_history():
                         print(f"[{m['role']}] {m['content']}")
                     continue
-                elif user_input == "/status":
+                elif user_input == "/status" or user_input == "/sync-status":
+                    # Handle /sync-status as deprecated alias for backward compatibility
+                    if user_input == "/sync-status":
+                        # Deprecated: /sync-status is an alias for /status (Ollama/SearXNG only)
+                        pass
+                    
                     print("[接続ステータス確認]")
                     # Ollama connection check
                     try:

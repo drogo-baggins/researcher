@@ -24,8 +24,19 @@ dist/
 # VSCode
 .vscode/
 
+# PyCharm / IDE
+.idea/
+
 # Logs
 *.log
 
 # Mac
 .DS_Store
+
+# Project-specific configuration and state files
+# User-specific secrets and local configuration
+mcp_config.json
+mcp_config.toml
+
+# Local state and cache directories
+.researcher/
