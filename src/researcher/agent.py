@@ -15,6 +15,8 @@ class QueryAgent:
         "- 統計データ・数値情報（例: 「2025年の人口」「GDP成長率」）\n"
         "- 現在のイベント・スケジュール（例: 「今週末のイベント」「オリンピック日程」）\n"
         "- 不明な事実・確認が必要な情報（例: 「○○社のCEOは誰？」「△△の発売日」）\n"
+        "- 企業製品の最新版・機能・リリースノート（例: 「TIBCO EBXの最新機能」「Salesforceの新バージョン」「製品Xのリリースノート」）\n"
+        "公式ドキュメント、製品サイト、リリースノートを優先的に検索してください。\n"
         "出力はJSONで、{\"needs_search\": bool, \"keywords\": [\"...\"], \"reasoning\": \"...\"} の形式にしてください。"
     )
 
@@ -24,6 +26,8 @@ class QueryAgent:
         "- Statistical data or numerical information (e.g., '2025 population', 'GDP growth rate')\n"
         "- Current events or schedules (e.g., 'events this weekend', 'Olympics schedule')\n"
         "- Unknown facts or information requiring verification (e.g., 'Who is the CEO of X?', 'Release date of Y')\n"
+        "- Latest versions, features, or release notes of enterprise products (e.g., 'TIBCO EBX latest features', 'Salesforce new version', 'Product X release notes')\n"
+        "Prioritize official documentation, product sites, and release notes in your search.\n"
         "Output in JSON format: {\"needs_search\": bool, \"keywords\": [\"...\"], \"reasoning\": \"...\"}."
     )
 
@@ -97,6 +101,7 @@ class QueryAgent:
             prompt = (
                 f"前回の検索でクロールに失敗したドメイン: {', '.join(failed_domains) if failed_domains else '（なし）'}。\n"
                 f"これらを避けて、異なるソースから情報を得られるよう代替の検索語を提案してください。\n"
+                f"公式ドキュメント、製品サイト、リリースノートを優先する検索語を提案してください。\n"
                 f"元のクエリ: {original_query}\n"
                 f"前回のキーワード: {', '.join(previous_keywords) if previous_keywords else '（なし）'}\n"
                 f"新しい検索クエリのみを出力してください（JSON不要、1行のクエリのみ）。"
@@ -105,6 +110,7 @@ class QueryAgent:
             prompt = (
                 f"Previous crawl failed for domains: {', '.join(failed_domains) if failed_domains else '(none)'}.\n"
                 f"Suggest alternative search terms to avoid these and find information from different sources.\n"
+                f"Prioritize search terms that emphasize official documentation, product sites, and release notes.\n"
                 f"Original query: {original_query}\n"
                 f"Previous keywords: {', '.join(previous_keywords) if previous_keywords else '(none)'}\n"
                 f"Output only the new search query (no JSON, single line only)."

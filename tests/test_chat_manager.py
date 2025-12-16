@@ -796,3 +796,30 @@ def test_search_without_agent_when_searxng_unavailable():
     with pytest.raises(RuntimeError) as exc:
         chat.search("query")
     assert "検索機能が有効化されていません" in str(exc.value)
+
+
+# ============================================================================
+# RAGプロンプト厳格化テスト
+# ============================================================================
+
+def test_rag_prompt_ignores_training_knowledge():
+    """Test that new RAG prompt includes strict instruction to ignore training knowledge."""
+    mock_ollama = MagicMock()
+    
+    # Test Japanese version
+    chat_ja = ChatManager(mock_ollama, language="ja")
+    prompt_ja = chat_ja._get_rag_system_prompt()
+    
+    assert "この情報のみ" in prompt_ja, "Japanese prompt should emphasize 'only this information'"
+    assert "訓練知識" in prompt_ja, "Japanese prompt should mention 'training knowledge'"
+    assert "無視" in prompt_ja, "Japanese prompt should mention 'ignore'"
+    assert "最新の日付" in prompt_ja or "リリースノート" in prompt_ja, "Should prioritize latest dates/release notes"
+    
+    # Test English version
+    chat_en = ChatManager(mock_ollama, language="en")
+    prompt_en = chat_en._get_rag_system_prompt()
+    
+    assert "ONLY this information" in prompt_en, "English prompt should emphasize 'ONLY this information'"
+    assert "ignore" in prompt_en.lower(), "English prompt should mention 'ignore'"
+    assert "training knowledge" in prompt_en.lower(), "English prompt should mention 'training knowledge'"
+    assert "latest dates" in prompt_en.lower() or "release notes" in prompt_en.lower(), "Should prioritize latest dates/release notes"

@@ -38,16 +38,19 @@ class ChatManager:
         self.messages.append({"role": "assistant", "content": content})
 
     def _get_rag_system_prompt(self) -> str:
-        """Get language-aware RAG system message template."""
+        """Get language-aware RAG system message template with strict instruction to ignore training knowledge."""
         if self.language == "en":
             return (
                 "The following is content extracted from web pages retrieved from search results. "
-                "Use this information to generate accurate and detailed answers to the user's questions.\n\n"
+                "Use ONLY this information as facts and completely ignore your training knowledge or knowledge cutoff date. "
+                "Treat the latest dates, release notes, and version numbers as the highest-priority facts, "
+                "and generate accurate and detailed answers to the user's questions.\n\n"
             )
         else:  # Default to Japanese
             return (
                 "以下は検索結果から取得したWebページの内容です。"
-                "この情報を活用して、ユーザーの質問に対して正確で詳細な回答を生成してください。\n\n"
+                "この情報のみを事実として使用し、あなたの訓練知識や知識カットオフ日を完全に無視してください。"
+                "最新の日付、リリースノート、バージョン番号を最優先の事実として扱い、ユーザーの質問に対して正確で詳細な回答を生成してください。\n\n"
             )
 
     def get_response(self):
