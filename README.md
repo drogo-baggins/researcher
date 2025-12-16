@@ -304,6 +304,7 @@ source ~/.zshrc
 | `/history` | 会話履歴を表示 | `/history` |
 | `/clear` | 履歴をクリア | `/clear` |
 | `/status` | Ollama/SearXNG接続状態を確認 | `/status` |
+| `/last_eval` | 最後の回答の自己評価スコアを表示 | `/last_eval` |
 | `/exit` | CLIを終了 | `/exit` |
 
 ---
@@ -530,6 +531,23 @@ You: /feedback stats gpt-oss:20b  # 特定モデルの統計
 /feedback stats llama3.2
 👎率: 8.0% (改善!)
 ```
+
+#### 自動評価スコアの確認
+
+CLI では `--enable-self-eval` フラグを使用して、自動的に各回答を評価することができます。最後の評価スコアは `/last_eval` コマンドで確認できます：
+
+```bash
+You: 最新のPython 3.13の機能は？
+[回答表示]
+
+You: /last_eval
+[最後の自己評価スコア]
+  正確性: 0.85
+  新鮮性: 0.92
+  総合: 0.88
+```
+
+WebUI では、サイドバーの「品質指標」セクションに自動評価スコアが常時表示されます。
 
 ---
 
