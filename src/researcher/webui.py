@@ -22,6 +22,8 @@ from researcher.config import (
     get_relevance_threshold,
     ensure_ollama_running,
     ensure_searxng_running,
+    save_feedback,
+    get_feedback_stats,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -319,6 +321,29 @@ def render_sidebar():
                 st.error("✗ SearXNG接続失敗")
         else:
             st.warning("- SearXNG未設定")
+        
+        # Feedback statistics
+        st.divider()
+        st.subheader("📊 品質指標")
+        
+        try:
+            # Get overall stats
+            stats = get_feedback_stats()
+            if stats.get("total_count", 0) > 0:
+                st.metric("👎率 (全モデル)", f"{stats.get('thumbs_down_rate', 0):.1%}")
+                
+                # Get current model stats
+                current_model = st.session_state.chat_manager.get_current_model()
+                if current_model in stats.get("by_model", {}):
+                    model_stats = stats["by_model"][current_model]
+                    st.metric(
+                        f"👎率 ({current_model})",
+                        f"{model_stats.get('thumbs_down_rate', 0):.1%}"
+                    )
+            else:
+                st.info("フィードバックがまだありません")
+        except Exception as e:
+            st.warning(f"統計情報の読み込みに失敗: {e}")
 
 
 def render_chat():
@@ -368,6 +393,32 @@ def render_chat():
                 full_response = f"エラーが発生しました: {e}"
         
         st.session_state.messages.append({"role": "assistant", "content": full_response})
+        
+        # Add feedback buttons for last message
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("👍 良い", key="feedback_up"):
+                # Get last user query and assistant response
+                user_msg = user_input
+                assistant_msg = full_response
+                model = st.session_state.chat_manager.get_current_model()
+                success = save_feedback(user_msg, assistant_msg, "up", model, st.session_state.current_session_id)
+                if success:
+                    st.success("フィードバックを保存しました ✓")
+                else:
+                    st.error("フィードバック保存に失敗しました")
+        
+        with col2:
+            if st.button("👎 悪い", key="feedback_down"):
+                # Get last user query and assistant response
+                user_msg = user_input
+                assistant_msg = full_response
+                model = st.session_state.chat_manager.get_current_model()
+                success = save_feedback(user_msg, assistant_msg, "down", model, st.session_state.current_session_id)
+                if success:
+                    st.success("フィードバックを保存しました ✓")
+                else:
+                    st.error("フィードバック保存に失敗しました")
         
         # Auto-save session
         if st.session_state.current_session_id is None:

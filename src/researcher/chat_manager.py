@@ -340,6 +340,10 @@ class ChatManager:
     def get_history(self):
         return self.messages
 
+    def get_current_model(self) -> str:
+        """Get the current model name from ollama_client."""
+        return self.ollama_client.model if self.ollama_client else "unknown"
+
     def execute_mcp_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         if not self.mcp_client:
             raise RuntimeError("MCP機能が有効化されていません")

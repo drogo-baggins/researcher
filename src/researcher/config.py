@@ -277,3 +277,161 @@ def save_blacklist_domains(domains: set) -> None:
     except Exception as exc:
         logging.warning("ブラックリスト保存エラー: %s", exc)
 
+
+# Feedback persistence configuration
+FEEDBACK_FILE_PATH = Path.home() / ".researcher" / "feedback.json"
+
+
+def save_feedback(
+    query: str,
+    response: str,
+    rating: str,
+    model: str,
+    session_id: Optional[int] = None
+) -> bool:
+    """Save feedback record to JSON file.
+    
+    Args:
+        query: User query
+        response: LLM response
+        rating: "up" or "down"
+        model: Model name (e.g., "gpt-oss:20b")
+        session_id: Optional session ID
+    
+    Returns:
+        True if save successful, False otherwise
+    """
+    try:
+        FEEDBACK_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Load existing feedback
+        feedback_list = []
+        if FEEDBACK_FILE_PATH.exists():
+            with open(FEEDBACK_FILE_PATH, "r", encoding="utf-8") as f:
+                feedback_list = json.load(f)
+        
+        # Add new feedback record
+        record = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "query": query,
+            "response": response,
+            "rating": rating,
+            "model": model,
+            "session_id": session_id
+        }
+        feedback_list.append(record)
+        
+        # Sort by timestamp descending
+        feedback_list.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        
+        # Save to file
+        with open(FEEDBACK_FILE_PATH, "w", encoding="utf-8") as f:
+            json.dump(feedback_list, f, indent=2, ensure_ascii=False)
+        
+        return True
+    except Exception as exc:
+        logging.warning("フィードバック保存エラー: %s", exc)
+        return False
+
+
+def load_feedback_history() -> list:
+    """Load feedback history from JSON file with model field compatibility.
+    
+    For records missing 'model' field, sets it to 'unknown' for compatibility.
+    """
+    if not FEEDBACK_FILE_PATH.exists():
+        return []
+    try:
+        with open(FEEDBACK_FILE_PATH, "r", encoding="utf-8") as f:
+            feedback_list = json.load(f)
+            # Ensure all records have 'model' field for compatibility
+            for record in feedback_list:
+                if "model" not in record:
+                    record["model"] = "unknown"
+            return feedback_list
+    except Exception as exc:
+        logging.warning("フィードバック読み込みエラー: %s", exc)
+    return []
+
+
+def get_feedback_stats(model_filter: Optional[str] = None) -> Dict[str, Any]:
+    """Get feedback statistics, optionally filtered by model.
+    
+    Args:
+        model_filter: Optional model name to filter by (e.g., "gpt-oss:20b")
+    
+    Returns:
+        Dict with statistics:
+        {
+            "total_count": int,
+            "thumbs_down_count": int,
+            "thumbs_down_rate": float,
+            "by_model": {
+                "model_name": {
+                    "thumbs_down_rate": float,
+                    "total_count": int,
+                    "thumbs_down_count": int
+                },
+                ...
+            }
+        }
+    """
+    feedback_list = load_feedback_history()
+    
+    if not feedback_list:
+        return {
+            "total_count": 0,
+            "thumbs_down_count": 0,
+            "thumbs_down_rate": 0.0,
+            "by_model": {}
+        }
+    
+    # Calculate overall stats
+    total_count = len(feedback_list)
+    thumbs_down_count = sum(1 for r in feedback_list if r.get("rating") == "down")
+    thumbs_down_rate = thumbs_down_count / total_count if total_count > 0 else 0.0
+    
+    # Calculate per-model stats
+    by_model = {}
+    for record in feedback_list:
+        model = record.get("model", "unknown")
+        if model not in by_model:
+            by_model[model] = {
+                "total_count": 0,
+                "thumbs_down_count": 0,
+                "thumbs_down_rate": 0.0
+            }
+        by_model[model]["total_count"] += 1
+        if record.get("rating") == "down":
+            by_model[model]["thumbs_down_count"] += 1
+    
+    # Calculate thumbs_down_rate for each model
+    for model_stats in by_model.values():
+        if model_stats["total_count"] > 0:
+            model_stats["thumbs_down_rate"] = (
+                model_stats["thumbs_down_count"] / model_stats["total_count"]
+            )
+    
+    # Apply model filter if specified
+    if model_filter:
+        filtered_feedback = [r for r in feedback_list if r.get("model") == model_filter]
+        if filtered_feedback:
+            model_total = len(filtered_feedback)
+            model_thumbs_down = sum(1 for r in filtered_feedback if r.get("rating") == "down")
+            model_thumbs_down_rate = model_thumbs_down / model_total if model_total > 0 else 0.0
+            
+            return {
+                "total_count": model_total,
+                "thumbs_down_count": model_thumbs_down,
+                "thumbs_down_rate": model_thumbs_down_rate,
+                "by_model": by_model,
+                "model_filter": model_filter
+            }
+    
+    return {
+        "total_count": total_count,
+        "thumbs_down_count": thumbs_down_count,
+        "thumbs_down_rate": thumbs_down_rate,
+        "by_model": by_model
+    }
+

@@ -148,3 +148,108 @@ def test_load_blacklist_domains_strips_whitespace():
             assert result == {"example.com", "test.com"}
     finally:
         Path(temp_path).unlink()
+
+
+def test_save_feedback_includes_model():
+    """Test that save_feedback includes model field in saved record."""
+    from researcher.config import save_feedback, load_feedback_history, FEEDBACK_FILE_PATH
+    import json
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        feedback_path = Path(tmpdir) / "feedback.json"
+        
+        with patch("researcher.config.FEEDBACK_FILE_PATH", feedback_path):
+            # Save feedback with model
+            success = save_feedback(
+                query="Test query",
+                response="Test response",
+                rating="up",
+                model="gpt-oss:20b",
+                session_id=1
+            )
+            
+            assert success is True
+            assert feedback_path.exists()
+            
+            # Load and verify
+            with open(feedback_path, "r") as f:
+                records = json.load(f)
+            
+            assert len(records) == 1
+            assert records[0]["model"] == "gpt-oss:20b"
+            assert records[0]["query"] == "Test query"
+            assert records[0]["response"] == "Test response"
+            assert records[0]["rating"] == "up"
+            assert records[0]["session_id"] == 1
+            assert "timestamp" in records[0]
+
+
+def test_feedback_stats_model_filter():
+    """Test that get_feedback_stats correctly filters by model."""
+    from researcher.config import save_feedback, get_feedback_stats, FEEDBACK_FILE_PATH
+    import json
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        feedback_path = Path(tmpdir) / "feedback.json"
+        
+        with patch("researcher.config.FEEDBACK_FILE_PATH", feedback_path):
+            # Save multiple feedback records with different models
+            save_feedback("q1", "r1", "down", "gpt-oss:20b")
+            save_feedback("q2", "r2", "down", "gpt-oss:20b")
+            save_feedback("q3", "r3", "up", "gpt-oss:20b")
+            save_feedback("q4", "r4", "down", "llama3.2")
+            save_feedback("q5", "r5", "up", "llama3.2")
+            
+            # Get overall stats
+            overall_stats = get_feedback_stats()
+            assert overall_stats["total_count"] == 5
+            assert overall_stats["thumbs_down_count"] == 3
+            assert overall_stats["thumbs_down_rate"] == 0.6
+            
+            # Get model-specific stats
+            gpt_oss_stats = get_feedback_stats(model_filter="gpt-oss:20b")
+            assert gpt_oss_stats["total_count"] == 3
+            assert gpt_oss_stats["thumbs_down_count"] == 2
+            assert gpt_oss_stats["thumbs_down_rate"] == 2/3
+            assert gpt_oss_stats.get("model_filter") == "gpt-oss:20b"
+            
+            # Check by_model in response contains both models
+            assert "by_model" in gpt_oss_stats
+            assert "gpt-oss:20b" in gpt_oss_stats["by_model"]
+            assert "llama3.2" in gpt_oss_stats["by_model"]
+
+
+def test_load_feedback_history_handles_missing_model():
+    """Test that load_feedback_history sets 'unknown' for records without model field."""
+    from researcher.config import load_feedback_history, FEEDBACK_FILE_PATH
+    import json
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        feedback_path = Path(tmpdir) / "feedback.json"
+        
+        # Create feedback records with and without model field
+        records = [
+            {
+                "timestamp": "2025-01-01T10:00:00",
+                "query": "q1",
+                "response": "r1",
+                "rating": "up",
+                "model": "gpt-oss:20b"
+            },
+            {
+                "timestamp": "2025-01-01T09:00:00",
+                "query": "q2",
+                "response": "r2",
+                "rating": "down"
+                # Missing model field
+            }
+        ]
+        
+        with feedback_path.open("w") as f:
+            json.dump(records, f)
+        
+        with patch("researcher.config.FEEDBACK_FILE_PATH", feedback_path):
+            loaded = load_feedback_history()
+            assert len(loaded) == 2
+            assert loaded[0]["model"] == "gpt-oss:20b"
+            assert loaded[1]["model"] == "unknown"  # Should be set to "unknown"

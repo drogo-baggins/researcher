@@ -14,6 +14,8 @@ from researcher.config import (
     get_mcp_servers_config,
     get_relevance_threshold,
     get_searxng_url,
+    save_feedback,
+    get_feedback_stats,
 )
 from researcher.ollama_client import OllamaClient
 from researcher.reranker import EmbeddingReranker
@@ -326,6 +328,81 @@ def main():
                     
                     else:
                         print("使用法: /blacklist [show|add <domain>|clear]")
+                    
+                    continue
+                elif user_input.startswith("/feedback"):
+                    parts = user_input.split(maxsplit=1)
+                    subcommand = parts[1].strip() if len(parts) > 1 else "help"
+                    
+                    if subcommand in ("thumbs_up", "up"):
+                        if chat.messages and any(m.get("role") == "assistant" for m in chat.messages):
+                            # Get last user query and assistant response
+                            user_msg = ""
+                            assistant_msg = ""
+                            for msg in reversed(chat.messages):
+                                if msg.get("role") == "assistant" and not assistant_msg:
+                                    assistant_msg = msg.get("content", "")
+                                elif msg.get("role") == "user" and not user_msg:
+                                    user_msg = msg.get("content", "")
+                                if user_msg and assistant_msg:
+                                    break
+                            
+                            model = chat.get_current_model()
+                            success = save_feedback(user_msg, assistant_msg, "up", model)
+                            if success:
+                                print("[👍 フィードバックを保存しました (thumbs_up)]")
+                            else:
+                                print("[ERROR] フィードバック保存に失敗しました")
+                        else:
+                            print("[ERROR] 回答がまだありません")
+                    
+                    elif subcommand in ("thumbs_down", "down"):
+                        if chat.messages and any(m.get("role") == "assistant" for m in chat.messages):
+                            # Get last user query and assistant response
+                            user_msg = ""
+                            assistant_msg = ""
+                            for msg in reversed(chat.messages):
+                                if msg.get("role") == "assistant" and not assistant_msg:
+                                    assistant_msg = msg.get("content", "")
+                                elif msg.get("role") == "user" and not user_msg:
+                                    user_msg = msg.get("content", "")
+                                if user_msg and assistant_msg:
+                                    break
+                            
+                            model = chat.get_current_model()
+                            success = save_feedback(user_msg, assistant_msg, "down", model)
+                            if success:
+                                print("[👎 フィードバックを保存しました (thumbs_down)]")
+                            else:
+                                print("[ERROR] フィードバック保存に失敗しました")
+                        else:
+                            print("[ERROR] 回答がまだありません")
+                    
+                    elif subcommand.startswith("stats"):
+                        stats_parts = subcommand.split()
+                        model_filter = stats_parts[1] if len(stats_parts) > 1 else None
+                        
+                        stats = get_feedback_stats(model_filter=model_filter)
+                        print("\n[フィードバック統計]")
+                        if model_filter:
+                            print(f"  モデル: {model_filter}")
+                            print(f"  👎率: {stats.get('thumbs_down_rate', 0):.2%}")
+                            print(f"  👎数: {stats.get('thumbs_down_count', 0)}/{stats.get('total_count', 0)}")
+                        else:
+                            print(f"  全体 👎率: {stats.get('thumbs_down_rate', 0):.2%}")
+                            print(f"  👎数: {stats.get('thumbs_down_count', 0)}/{stats.get('total_count', 0)}")
+                            
+                            if stats.get('by_model'):
+                                print("\n  モデル別統計:")
+                                for model_name, model_stats in stats.get('by_model', {}).items():
+                                    print(f"    {model_name}: 👎率 {model_stats.get('thumbs_down_rate', 0):.2%} ({model_stats.get('thumbs_down_count', 0)}/{model_stats.get('total_count', 0)})")
+                    
+                    else:
+                        print("使用法: /feedback [thumbs_up|thumbs_down|stats [model_name]]")
+                        print("  thumbs_up      最後の回答が良かったらフィードバック")
+                        print("  thumbs_down    最後の回答が悪かったらフィードバック")
+                        print("  stats          全体の統計を表示")
+                        print("  stats <model>  特定モデルの統計を表示")
                     
                     continue
                 elif user_input == "/mcp-tools":

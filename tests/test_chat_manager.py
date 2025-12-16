@@ -831,3 +831,34 @@ def test_rag_prompt_ignores_training_knowledge():
     assert "ignore" in prompt_en.lower(), "English prompt should mention 'ignore'"
     assert "training knowledge" in prompt_en.lower(), "English prompt should mention 'training knowledge'"
     assert "latest dates" in prompt_en.lower() or "release notes" in prompt_en.lower(), "Should prioritize latest dates/release notes"
+
+
+# ============================================================================
+# フィードバック機能テスト
+# ============================================================================
+
+def test_feedback_save_includes_model():
+    """Test that feedback is saved with model information."""
+    mock_ollama = MagicMock()
+    mock_ollama.model = "gpt-oss:20b"
+    
+    chat = ChatManager(mock_ollama)
+    
+    # Verify get_current_model returns the correct model
+    model = chat.get_current_model()
+    assert model == "gpt-oss:20b"
+
+
+def test_get_current_model_returns_ollama_model():
+    """Test that get_current_model returns ollama_client model name."""
+    mock_ollama = MagicMock()
+    mock_ollama.model = "llama3.2"
+    
+    chat = ChatManager(mock_ollama)
+    assert chat.get_current_model() == "llama3.2"
+
+
+def test_get_current_model_handles_none_ollama():
+    """Test that get_current_model returns 'unknown' when ollama_client is None."""
+    chat = ChatManager(None)
+    assert chat.get_current_model() == "unknown"
