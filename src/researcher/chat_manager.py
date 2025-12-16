@@ -1,4 +1,11 @@
 from typing import Any, Dict, List, Optional
+import json
+import logging
+
+LOGGER = logging.getLogger(__name__)
+
+# Maximum number of self-evaluation retries (loop-based, not recursive)
+MAX_SELF_EVAL_RETRIES = 1
 
 
 class ChatManager:
@@ -12,6 +19,8 @@ class ChatManager:
         citation_manager: Optional[Any] = None,
         web_crawler: Optional[Any] = None,
         language: str = "ja",
+        enable_self_evaluation: bool = False,
+        enable_feedback_adjustment: bool = True,
     ):
         self.ollama_client = ollama_client
         self.searxng_client = searxng_client
@@ -21,10 +30,13 @@ class ChatManager:
         self.citation_manager = citation_manager
         self.web_crawler = web_crawler
         self.language = language
+        self.enable_self_evaluation = enable_self_evaluation
+        self.enable_feedback_adjustment = enable_feedback_adjustment
         self.messages = []
         self.current_citation_ids: List[int] = []
         self.last_search_content: str = ""  # Store crawled content from last search
         self.last_search_turns_remaining: int = 0  # Number of turns to keep injecting crawled content
+        self.last_evaluation_score: Optional[Dict[str, Any]] = None  # Store latest evaluation score
 
     def add_system_message(self, content, search_result: bool = False):
         self.messages.append(
@@ -53,15 +65,63 @@ class ChatManager:
                 "最新の日付、リリースノート、バージョン番号を最優先の事実として扱い、ユーザーの質問に対して正確で詳細な回答を生成してください。\n\n"
             )
 
-    def get_response(self):
+    def _get_feedback_adjusted_system_prompt(self) -> str:
+        """Get feedback-adjusted system prompt with quality warnings based on model feedback stats.
+        
+        If thumbs_down rate exceeds threshold, prepends warning message to RAG prompt.
+        This method respects self.language for localization.
+        
+        Returns:
+            System prompt with optional feedback adjustment prepended to RAG prompt
+        """
+        try:
+            from researcher.config import get_feedback_stats
+            
+            # Get feedback stats for current model
+            current_model = self.get_current_model()
+            stats = get_feedback_stats()
+            
+            thumbs_down_threshold = 0.3  # Trigger warning if thumbs_down_rate > 30%
+            current_model_stats = stats.get("by_model", {}).get(current_model, {})
+            thumbs_down_rate = current_model_stats.get("thumbs_down_rate", 0.0)
+            
+            # Prepare base RAG prompt
+            base_prompt = self._get_rag_system_prompt()
+            
+            # Add feedback warning if threshold exceeded
+            if thumbs_down_rate > thumbs_down_threshold:
+                if self.language == "en":
+                    warning = (
+                        f"⚠️ WARNING: This model ({current_model}) has a {thumbs_down_rate:.1%} error rate based on recent feedback. "
+                        f"Please verify responses carefully, especially for critical information. "
+                        f"Consider using a different model if accuracy is crucial.\n\n"
+                    )
+                else:
+                    warning = (
+                        f"⚠️ 警告: このモデル({current_model})は最近のフィードバックに基づいて{thumbs_down_rate:.1%}の誤り率を示しています。"
+                        f"特に重要な情報について応答を慎重に検証してください。"
+                        f"正確性が重要な場合は、別のモデルの使用を検討してください。\n\n"
+                    )
+                return warning + base_prompt
+            else:
+                return base_prompt
+        
+        except Exception as e:
+            # Silently fall back to base RAG prompt if adjustment fails
+            LOGGER.debug(f"Feedback adjustment failed: {e}")
+            return self._get_rag_system_prompt()
+
+    def get_response(self, evaluation_threshold: float = 0.7):
         # Build messages with optional crawled content injection
         messages = self.messages.copy()
         
         # If we have crawled content from recent search and turns remaining, inject it as a system message
         if self.last_search_content and self.last_search_turns_remaining > 0:
+            # Use feedback-adjusted RAG prompt if enabled, otherwise use base RAG prompt
+            rag_prompt = self._get_feedback_adjusted_system_prompt() if self.enable_feedback_adjustment else self._get_rag_system_prompt()
             crawl_system_msg = {
                 "role": "system",
-                "content": self._get_rag_system_prompt() + self.last_search_content
+                "content": rag_prompt + self.last_search_content
             }
             # 既存のシステムメッセージの後に挿入
             system_count = sum(1 for m in messages if m.get("role") == "system")
@@ -74,6 +134,57 @@ class ChatManager:
         self.add_assistant_message(response)
         self.current_citation_ids.clear()
         
+        # Get last user query for evaluation
+        last_user_query = None
+        for msg in reversed(self.messages):
+            if msg.get("role") == "user":
+                last_user_query = msg.get("content", "")
+                break
+        
+        # Self-evaluation with explicit loop-based retry (not recursive)
+        if self.enable_self_evaluation and last_user_query:
+            retries_remaining = MAX_SELF_EVAL_RETRIES
+            while retries_remaining > 0:
+                eval_result = self.self_evaluate(last_user_query, response)
+                overall_score = eval_result.get("overall_score", 0.5)
+                
+                if overall_score < evaluation_threshold and self.searxng_client and self.agent and retries_remaining > 0:
+                    try:
+                        # Auto-search and regenerate
+                        LOGGER.info(f"Response quality low (score: {overall_score:.2f}), executing retry {MAX_SELF_EVAL_RETRIES - retries_remaining + 1}/{MAX_SELF_EVAL_RETRIES}")
+                        auto_result = self.auto_search(last_user_query)
+                        if auto_result.get("searched"):
+                            # Re-generate response with search context
+                            self.messages.pop()  # Remove previous response
+                            messages = self.messages.copy()
+                            
+                            # Inject crawled content
+                            if self.last_search_content and self.last_search_turns_remaining > 0:
+                                rag_prompt = self._get_feedback_adjusted_system_prompt() if self.enable_feedback_adjustment else self._get_rag_system_prompt()
+                                crawl_system_msg = {
+                                    "role": "system",
+                                    "content": rag_prompt + self.last_search_content
+                                }
+                                system_count = sum(1 for m in messages if m.get("role") == "system")
+                                messages.insert(system_count, crawl_system_msg)
+                            
+                            # Generate new response
+                            response = self.ollama_client.generate_response(messages)
+                            citations_md = self._format_citations_markdown()
+                            if citations_md:
+                                response = response + "\n\n" + citations_md
+                            self.add_assistant_message(response)
+                        else:
+                            break  # No search results, stop retrying
+                    except Exception as e:
+                        LOGGER.warning(f"Auto-retry failed: {e}")
+                        break  # Stop retrying on error
+                    finally:
+                        retries_remaining -= 1
+                else:
+                    # Score is acceptable or no retry available
+                    break
+        
         # Decrement the remaining turns and clear if expired
         if self.last_search_turns_remaining > 0:
             self.last_search_turns_remaining -= 1
@@ -82,7 +193,7 @@ class ChatManager:
         
         return response
 
-    def get_response_stream(self):
+    def get_response_stream(self, evaluation_threshold: float = 0.7):
         chunks = []
         
         # Build messages with optional crawled content injection
@@ -90,9 +201,11 @@ class ChatManager:
         
         # If we have crawled content from recent search and turns remaining, inject it as a system message
         if self.last_search_content and self.last_search_turns_remaining > 0:
+            # Use feedback-adjusted RAG prompt if enabled, otherwise use base RAG prompt
+            rag_prompt = self._get_feedback_adjusted_system_prompt() if self.enable_feedback_adjustment else self._get_rag_system_prompt()
             crawl_system_msg = {
                 "role": "system",
-                "content": self._get_rag_system_prompt() + self.last_search_content
+                "content": rag_prompt + self.last_search_content
             }
             # 既存のシステムメッセージの後に挿入
             system_count = sum(1 for m in messages if m.get("role") == "system")
@@ -109,6 +222,42 @@ class ChatManager:
                 response = response + "\n\n" + citations_md
             self.add_assistant_message(response)
             self.current_citation_ids.clear()
+            
+            # Get last user query for evaluation
+            last_user_query = None
+            for msg in reversed(self.messages[:-1]):  # Exclude newly added assistant message
+                if msg.get("role") == "user":
+                    last_user_query = msg.get("content", "")
+                    break
+            
+            # Self-evaluation with explicit loop-based retry (not recursive)
+            if self.enable_self_evaluation and last_user_query:
+                retries_remaining = MAX_SELF_EVAL_RETRIES
+                while retries_remaining > 0:
+                    eval_result = self.self_evaluate(last_user_query, response)
+                    overall_score = eval_result.get("overall_score", 0.5)
+                    
+                    if overall_score < evaluation_threshold and self.searxng_client and self.agent and retries_remaining > 0:
+                        try:
+                            # Auto-search and regenerate
+                            LOGGER.info(f"Response quality low (score: {overall_score:.2f}), executing retry {MAX_SELF_EVAL_RETRIES - retries_remaining + 1}/{MAX_SELF_EVAL_RETRIES}")
+                            auto_result = self.auto_search(last_user_query)
+                            if auto_result.get("searched"):
+                                # Re-generate response with search context
+                                self.messages.pop()  # Remove previous response
+                                for chunk in self.get_response_stream(evaluation_threshold=evaluation_threshold):
+                                    yield chunk
+                                # Don't set response here; it's streamed out in the recursive call
+                            else:
+                                break  # No search results, stop retrying
+                        except Exception as e:
+                            LOGGER.warning(f"Auto-retry failed: {e}")
+                            break  # Stop retrying on error
+                        finally:
+                            retries_remaining -= 1
+                    else:
+                        # Score is acceptable or no retry available
+                        break
             
             # Decrement the remaining turns and clear if expired
             if self.last_search_turns_remaining > 0:
@@ -343,6 +492,126 @@ class ChatManager:
     def get_current_model(self) -> str:
         """Get the current model name from ollama_client."""
         return self.ollama_client.model if self.ollama_client else "unknown"
+
+    def get_last_evaluation_score(self) -> Optional[Dict[str, Any]]:
+        """Get the last evaluation score from self_evaluate().
+        
+        Returns:
+            Dict with keys: accuracy_score, freshness_score, overall_score, reasoning
+            or None if no evaluation has been performed yet.
+        """
+        return self.last_evaluation_score
+
+    def self_evaluate(self, query: str, response: str) -> Dict[str, Any]:
+        """Evaluate response quality using LLM self-evaluation with JSON output.
+        
+        Returns evaluation scores including accuracy_score, freshness_score, overall_score, and reasoning.
+        On JSON parse failure, returns safe default values.
+        
+        Args:
+            query: Original user query
+            response: Generated assistant response
+            
+        Returns:
+            Dict with keys: accuracy_score, freshness_score, overall_score, reasoning
+        """
+        if not self.ollama_client:
+            # Default fallback when ollama_client is unavailable
+            return {
+                "accuracy_score": 0.5,
+                "freshness_score": 0.5,
+                "overall_score": 0.5,
+                "reasoning": "No Ollama client available for evaluation"
+            }
+        
+        try:
+            # Build evaluation prompt
+            if self.language == "en":
+                eval_prompt = (
+                    f"Evaluate the following assistant response for accuracy and freshness.\n"
+                    f"Return ONLY a JSON object with these fields:\n"
+                    f"- accuracy_score (0-1): Is the response factually correct?\n"
+                    f"- freshness_score (0-1): Is the response current/up-to-date?\n"
+                    f"- overall_score (0-1): Overall quality score\n"
+                    f"- reasoning (string): Brief explanation\n\n"
+                    f"User Query: {query}\n"
+                    f"Response: {response}\n\n"
+                    f"Return ONLY valid JSON, no other text."
+                )
+            else:
+                eval_prompt = (
+                    f"以下のアシスタント応答の正確性と最新性を評価してください。\n"
+                    f"以下のフィールドを含むJSONオブジェクトをRETURNしてください:\n"
+                    f"- accuracy_score (0-1): 応答は事実上正確ですか？\n"
+                    f"- freshness_score (0-1): 応答は最新の情報ですか？\n"
+                    f"- overall_score (0-1): 全体的な品質スコア\n"
+                    f"- reasoning (string): 簡潔な説明\n\n"
+                    f"ユーザークエリ: {query}\n"
+                    f"応答: {response}\n\n"
+                    f"JSONのみを返してください。他のテキストは不要です。"
+                )
+            
+            # Call LLM for evaluation
+            messages = [{"role": "user", "content": eval_prompt}]
+            eval_response = self.ollama_client.generate_response(messages)
+            
+            # Parse JSON response
+            try:
+                # Try to extract JSON from response (in case of extra text)
+                import re
+                json_match = re.search(r'\{.*\}', eval_response, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group()
+                    eval_result = json.loads(json_str)
+                    
+                    # Validate and normalize scores
+                    result = {
+                        "accuracy_score": float(eval_result.get("accuracy_score", 0.5)) or 0.5,
+                        "freshness_score": float(eval_result.get("freshness_score", 0.5)) or 0.5,
+                        "overall_score": float(eval_result.get("overall_score", 0.5)) or 0.5,
+                        "reasoning": str(eval_result.get("reasoning", ""))
+                    }
+                    
+                    # Clamp scores to [0, 1]
+                    for key in ["accuracy_score", "freshness_score", "overall_score"]:
+                        result[key] = max(0.0, min(1.0, result[key]))
+                    
+                    self.last_evaluation_score = result
+                    
+                    # Log evaluation results
+                    LOGGER.info(
+                        f"Self-evaluation completed: "
+                        f"accuracy={result['accuracy_score']:.2f}, "
+                        f"freshness={result['freshness_score']:.2f}, "
+                        f"overall={result['overall_score']:.2f} | "
+                        f"reasoning: {result['reasoning'][:100]}"
+                    )
+                    
+                    return result
+                else:
+                    raise ValueError("No JSON found in response")
+            except (json.JSONDecodeError, ValueError) as e:
+                LOGGER.warning(f"Failed to parse evaluation JSON: {e}")
+                # Safe default fallback
+                default = {
+                    "accuracy_score": 0.5,
+                    "freshness_score": 0.5,
+                    "overall_score": 0.5,
+                    "reasoning": "Evaluation parse error"
+                }
+                self.last_evaluation_score = default
+                return default
+        
+        except Exception as e:
+            LOGGER.warning(f"Self-evaluation failed: {e}")
+            default = {
+                "accuracy_score": 0.5,
+                "freshness_score": 0.5,
+                "overall_score": 0.5,
+                "reasoning": "Evaluation error"
+            }
+            self.last_evaluation_score = default
+            return default
 
     def execute_mcp_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         if not self.mcp_client:

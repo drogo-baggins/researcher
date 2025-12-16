@@ -89,6 +89,11 @@ def main():
         action="store_true",
         help="MCP機能を有効化（デフォルト設定を使用）",
     )
+    parser.add_argument(
+        "--enable-self-eval",
+        action="store_true",
+        help="LLM自己評価と自動再検索を有効化（品質向上ループ）",
+    )
     args = parser.parse_args()
 
     # モデル名の解決（CLI引数 > 環境変数 > デフォルト）
@@ -197,7 +202,15 @@ def main():
     web_crawler = WebCrawler() if searxng_client else None
 
     chat = ChatManager(
-        client, searxng_client=searxng_client, agent=agent, reranker=reranker, mcp_client=mcp_client, citation_manager=citation_manager, web_crawler=web_crawler, language=agent_language
+        client,
+        searxng_client=searxng_client,
+        agent=agent,
+        reranker=reranker,
+        mcp_client=mcp_client,
+        citation_manager=citation_manager,
+        web_crawler=web_crawler,
+        language=agent_language,
+        enable_self_evaluation=args.enable_self_eval,
     )
     chat.add_system_message("You are a helpful assistant.")
 
@@ -404,6 +417,19 @@ def main():
                         print("  stats          全体の統計を表示")
                         print("  stats <model>  特定モデルの統計を表示")
                     
+                    continue
+                elif user_input == "/last_eval":
+                    # Display last evaluation score
+                    eval_score = chat.get_last_evaluation_score()
+                    if eval_score:
+                        print("\n[最後の自己評価スコア]")
+                        print(f"  正確性スコア: {eval_score.get('accuracy_score', 0):.2f}")
+                        print(f"  最新性スコア: {eval_score.get('freshness_score', 0):.2f}")
+                        print(f"  総合スコア:   {eval_score.get('overall_score', 0):.2f}")
+                        print(f"  理由: {eval_score.get('reasoning', 'N/A')}")
+                    else:
+                        print("[最後の自己評価スコア]")
+                        print("  評価がまだ実行されていません")
                     continue
                 elif user_input == "/mcp-tools":
                     if not mcp_client:

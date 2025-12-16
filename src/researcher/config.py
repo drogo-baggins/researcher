@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import subprocess
+import tempfile
 import time
 from copy import deepcopy
 from pathlib import Path
@@ -289,26 +290,46 @@ def save_feedback(
     model: str,
     session_id: Optional[int] = None
 ) -> bool:
-    """Save feedback record to JSON file.
+    """Save feedback record to JSON file with validation and atomic writes.
     
     Args:
         query: User query
         response: LLM response
-        rating: "up" or "down"
-        model: Model name (e.g., "gpt-oss:20b")
+        rating: "up" or "down" (must be one of these values)
+        model: Model name (e.g., "gpt-oss:20b", must be non-empty)
         session_id: Optional session ID
     
     Returns:
         True if save successful, False otherwise
     """
+    # Input validation
+    if rating not in ("up", "down"):
+        logging.warning(f"Invalid rating value: {rating}. Must be 'up' or 'down'.")
+        return False
+    
+    if not model or not model.strip():
+        logging.warning("Model name cannot be empty")
+        return False
+    
     try:
         FEEDBACK_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
         
-        # Load existing feedback
+        # Load existing feedback with retry on lock/read failures
         feedback_list = []
-        if FEEDBACK_FILE_PATH.exists():
-            with open(FEEDBACK_FILE_PATH, "r", encoding="utf-8") as f:
-                feedback_list = json.load(f)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                if FEEDBACK_FILE_PATH.exists():
+                    with open(FEEDBACK_FILE_PATH, "r", encoding="utf-8") as f:
+                        feedback_list = json.load(f)
+                break
+            except (json.JSONDecodeError, IOError) as e:
+                if attempt < max_retries - 1:
+                    time.sleep(0.1 * (attempt + 1))  # Exponential backoff
+                    continue
+                logging.warning(f"Failed to read feedback file after {max_retries} attempts: {e}")
+                feedback_list = []
+                break
         
         # Add new feedback record
         record = {
@@ -316,7 +337,7 @@ def save_feedback(
             "query": query,
             "response": response,
             "rating": rating,
-            "model": model,
+            "model": model.strip(),
             "session_id": session_id
         }
         feedback_list.append(record)
@@ -324,13 +345,32 @@ def save_feedback(
         # Sort by timestamp descending
         feedback_list.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
         
-        # Save to file
-        with open(FEEDBACK_FILE_PATH, "w", encoding="utf-8") as f:
-            json.dump(feedback_list, f, indent=2, ensure_ascii=False)
+        # Atomic write using temporary file and os.replace
+        import tempfile
+        temp_fd, temp_path = tempfile.mkstemp(
+            prefix=".feedback_tmp_",
+            suffix=".json",
+            dir=FEEDBACK_FILE_PATH.parent,
+            text=True
+        )
         
-        return True
+        try:
+            with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+                json.dump(feedback_list, f, indent=2, ensure_ascii=False)
+            
+            # Atomic replace: os.replace is atomic on all platforms
+            os.replace(temp_path, FEEDBACK_FILE_PATH)
+            return True
+        except Exception as e:
+            # Clean up temp file if something goes wrong
+            try:
+                os.unlink(temp_path)
+            except Exception:
+                pass
+            raise e
+        
     except Exception as exc:
-        logging.warning("フィードバック保存エラー: %s", exc)
+        logging.warning(f"フィードバック保存エラー: {exc}")
         return False
 
 

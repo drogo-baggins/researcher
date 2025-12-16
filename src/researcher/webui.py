@@ -97,6 +97,7 @@ def initialize_session():
             citation_manager=citation_manager,
             web_crawler=web_crawler,
             language=language,
+            enable_self_evaluation=True,
         )
         chat_manager.add_system_message("You are a helpful assistant.")
         
@@ -342,6 +343,22 @@ def render_sidebar():
                     )
             else:
                 st.info("フィードバックがまだありません")
+            
+            # Display last evaluation score if available
+            st.divider()
+            eval_score = st.session_state.chat_manager.get_last_evaluation_score()
+            if eval_score:
+                st.subheader("🤖 最後の評価スコア")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("正確性", f"{eval_score.get('accuracy_score', 0):.2f}")
+                with col2:
+                    st.metric("最新性", f"{eval_score.get('freshness_score', 0):.2f}")
+                with col3:
+                    st.metric("総合", f"{eval_score.get('overall_score', 0):.2f}")
+                if eval_score.get('reasoning'):
+                    st.caption(f"理由: {eval_score['reasoning']}")
+        
         except Exception as e:
             st.warning(f"統計情報の読み込みに失敗: {e}")
 
@@ -351,10 +368,51 @@ def render_chat():
     st.title("🔍 Researcher")
     st.markdown("*ローカルAIリサーチャー - Ollama + SearXNG*")
     
-    # Display message history
-    for msg in st.session_state.messages:
+    # Display message history with feedback buttons for assistant messages
+    for idx, msg in enumerate(st.session_state.messages):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+            
+            # Add feedback buttons for assistant messages
+            if msg["role"] == "assistant":
+                # Find corresponding user message (previous message)
+                user_msg_content = ""
+                for prev_msg in reversed(st.session_state.messages[:idx]):
+                    if prev_msg["role"] == "user":
+                        user_msg_content = prev_msg["content"]
+                        break
+                
+                # Create feedback button columns
+                col1, col2, spacer = st.columns([1, 1, 10])
+                with col1:
+                    if st.button("👍", key=f"feedback_up_{idx}", help="この回答が良かった場合はクリック"):
+                        model = st.session_state.chat_manager.get_current_model()
+                        success = save_feedback(
+                            user_msg_content,
+                            msg["content"],
+                            "up",
+                            model,
+                            st.session_state.current_session_id
+                        )
+                        if success:
+                            st.success("フィードバックを保存しました ✓", icon="✅")
+                        else:
+                            st.error("フィードバック保存に失敗しました")
+                
+                with col2:
+                    if st.button("👎", key=f"feedback_down_{idx}", help="この回答が悪かった場合はクリック"):
+                        model = st.session_state.chat_manager.get_current_model()
+                        success = save_feedback(
+                            user_msg_content,
+                            msg["content"],
+                            "down",
+                            model,
+                            st.session_state.current_session_id
+                        )
+                        if success:
+                            st.success("フィードバックを保存しました ✓", icon="✅")
+                        else:
+                            st.error("フィードバック保存に失敗しました")
     
     # User input
     if user_input := st.chat_input("質問を入力してください...", key="chat_input"):
@@ -393,32 +451,6 @@ def render_chat():
                 full_response = f"エラーが発生しました: {e}"
         
         st.session_state.messages.append({"role": "assistant", "content": full_response})
-        
-        # Add feedback buttons for last message
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("👍 良い", key="feedback_up"):
-                # Get last user query and assistant response
-                user_msg = user_input
-                assistant_msg = full_response
-                model = st.session_state.chat_manager.get_current_model()
-                success = save_feedback(user_msg, assistant_msg, "up", model, st.session_state.current_session_id)
-                if success:
-                    st.success("フィードバックを保存しました ✓")
-                else:
-                    st.error("フィードバック保存に失敗しました")
-        
-        with col2:
-            if st.button("👎 悪い", key="feedback_down"):
-                # Get last user query and assistant response
-                user_msg = user_input
-                assistant_msg = full_response
-                model = st.session_state.chat_manager.get_current_model()
-                success = save_feedback(user_msg, assistant_msg, "down", model, st.session_state.current_session_id)
-                if success:
-                    st.success("フィードバックを保存しました ✓")
-                else:
-                    st.error("フィードバック保存に失敗しました")
         
         # Auto-save session
         if st.session_state.current_session_id is None:
