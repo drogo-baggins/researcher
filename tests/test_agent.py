@@ -141,3 +141,63 @@ def test_generate_retry_query_empty_response():
     retry_query = agent.generate_retry_query("original query", {"fail.com"}, [])
     
     assert retry_query == "original query"
+
+
+def test_system_prompt_contains_enterprise_product_keywords():
+    """Validate SYSTEM_PROMPT contains enterprise product detection and official docs priority keywords."""
+    mock_client = MagicMock(spec=OllamaClient)
+    agent = QueryAgent(mock_client)
+    
+    # Check Japanese SYSTEM_PROMPT
+    assert "企業製品" in agent.SYSTEM_PROMPT_JA, \
+        "SYSTEM_PROMPT_JA should mention enterprise products"
+    assert any(phrase in agent.SYSTEM_PROMPT_JA for phrase in ["最新版", "リリースノート", "公式ドキュメント"]), \
+        "SYSTEM_PROMPT_JA should contain latest version and release notes keywords"
+    
+    # Check English SYSTEM_PROMPT
+    assert any(phrase in agent.SYSTEM_PROMPT_EN.lower() for phrase in ["enterprise products", "release notes"]), \
+        "SYSTEM_PROMPT_EN should mention enterprise products or release notes"
+    assert "official documentation" in agent.SYSTEM_PROMPT_EN.lower(), \
+        "SYSTEM_PROMPT_EN should mention official documentation priority"
+
+
+def test_retry_query_prompt_prioritizes_official_documentation():
+    """Validate that retry query generation prioritizes official docs and product sites."""
+    mock_client = MagicMock(spec=OllamaClient)
+    mock_client.generate_response.return_value = "refined search query"
+    
+    agent = QueryAgent(mock_client, language="ja")
+    agent.generate_retry_query("original query", {"fail.com"}, [])
+    
+    # Extract the prompt from mock call arguments
+    call_args = mock_client.generate_response.call_args[0][0]
+    messages = call_args if isinstance(call_args, list) else call_args
+    
+    # Find system message with retry instructions
+    system_messages = [m for m in messages if m.get("role") == "system"]
+    retry_prompt = " ".join(m.get("content", "") for m in system_messages)
+    
+    # Check Japanese priority keywords
+    assert any(phrase in retry_prompt for phrase in ["公式ドキュメント", "製品サイト", "リリースノート"]), \
+        "Retry query prompt should prioritize official documentation, product sites, and release notes in Japanese"
+
+
+def test_retry_query_prompt_english_official_documentation():
+    """Validate English retry query prompt prioritizes official documentation."""
+    mock_client = MagicMock(spec=OllamaClient)
+    mock_client.generate_response.return_value = "refined search query"
+    
+    agent = QueryAgent(mock_client, language="en")
+    agent.generate_retry_query("original query", {"fail.com"}, [])
+    
+    # Extract the prompt from mock call arguments
+    call_args = mock_client.generate_response.call_args[0][0]
+    messages = call_args if isinstance(call_args, list) else call_args
+    
+    # Find system message with retry instructions
+    system_messages = [m for m in messages if m.get("role") == "system"]
+    retry_prompt = " ".join(m.get("content", "") for m in system_messages)
+    
+    # Check English priority keywords
+    assert any(phrase in retry_prompt.lower() for phrase in ["official documentation", "product sites", "release notes"]), \
+        "Retry query prompt should prioritize official documentation in English"

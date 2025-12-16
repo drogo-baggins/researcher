@@ -440,10 +440,18 @@ def test_get_response_injects_crawled_content_as_system_message():
     # generate_responseに渡されたメッセージを確認
     call_args = mock_ollama.generate_response.call_args[0][0]
     
-    # システムメッセージにクロール内容が含まれることを確認
+    # システムメッセージにクロール内容とRAGプロンプトが両方含まれることを確認
     system_messages = [m for m in call_args if m.get("role") == "system"]
-    assert any("Python is a programming language" in m["content"] for m in system_messages)
-    assert any("この情報を活用して" in m["content"] for m in system_messages)
+    
+    # クロール内容が存在することを確認
+    assert any("Python is a programming language" in m["content"] for m in system_messages), \
+        "Crawled content should be injected in system message"
+    
+    # RAGシステムプロンプトが存在することを確認
+    expected_rag_prompt = chat._get_rag_system_prompt()
+    system_content = " ".join(m["content"] for m in system_messages)
+    assert any(rag_phrase in system_content for rag_phrase in ["この情報のみを事実として", "Use ONLY this information as facts"]), \
+        "RAG prompt with strict instructions should be in system message"
     
     # ユーザーメッセージには注入されていないことを確認
     user_messages = [m for m in call_args if m.get("role") == "user"]
