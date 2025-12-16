@@ -174,6 +174,7 @@ class ChatManager:
                             if citations_md:
                                 response = response + "\n\n" + citations_md
                             self.add_assistant_message(response)
+                            self.current_citation_ids.clear()
                         else:
                             break  # No search results, stop retrying
                     except Exception as e:
@@ -243,11 +244,35 @@ class ChatManager:
                             LOGGER.info(f"Response quality low (score: {overall_score:.2f}), executing retry {MAX_SELF_EVAL_RETRIES - retries_remaining + 1}/{MAX_SELF_EVAL_RETRIES}")
                             auto_result = self.auto_search(last_user_query)
                             if auto_result.get("searched"):
-                                # Re-generate response with search context
+                                # Re-generate response with search context (non-recursive)
                                 self.messages.pop()  # Remove previous response
-                                for chunk in self.get_response_stream(evaluation_threshold=evaluation_threshold):
+                                
+                                # Build new messages with updated search content
+                                new_messages = self.messages.copy()
+                                if self.last_search_content and self.last_search_turns_remaining > 0:
+                                    rag_prompt = self._get_feedback_adjusted_system_prompt() if self.enable_feedback_adjustment else self._get_rag_system_prompt()
+                                    crawl_system_msg = {
+                                        "role": "system",
+                                        "content": rag_prompt + self.last_search_content
+                                    }
+                                    system_count = sum(1 for m in new_messages if m.get("role") == "system")
+                                    new_messages.insert(system_count, crawl_system_msg)
+                                
+                                # Generate new response (reset chunks for new attempt)
+                                retry_chunks = []
+                                for chunk in self.ollama_client.generate_response_stream(new_messages):
+                                    retry_chunks.append(chunk)
                                     yield chunk
-                                # Don't set response here; it's streamed out in the recursive call
+                                
+                                retry_response = "".join(retry_chunks)
+                                retry_citations_md = self._format_citations_markdown()
+                                if retry_citations_md:
+                                    yield "\n\n" + retry_citations_md
+                                    retry_response = retry_response + "\n\n" + retry_citations_md
+                                
+                                self.add_assistant_message(retry_response)
+                                self.current_citation_ids.clear()
+                                response = retry_response  # Update for final evaluation
                             else:
                                 break  # No search results, stop retrying
                         except Exception as e:
