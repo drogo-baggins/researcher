@@ -7,12 +7,16 @@ from researcher.config import (
     DEFAULT_RELEVANCE_THRESHOLD,
     DEFAULT_SEARXNG_URL,
     DEFAULT_EMBEDDING_MODEL,
+    DEFAULT_SETTINGS,
     get_embedding_model,
     get_relevance_threshold,
     get_searxng_url,
     load_blacklist_domains,
     save_blacklist_domains,
+    load_settings,
+    save_settings,
     BLACKLIST_FILE_PATH,
+    SETTINGS_FILE_PATH,
 )
 
 
@@ -253,3 +257,138 @@ def test_load_feedback_history_handles_missing_model():
             assert len(loaded) == 2
             assert loaded[0]["model"] == "gpt-oss:20b"
             assert loaded[1]["model"] == "unknown"  # Should be set to "unknown"
+
+
+def test_load_settings_default():
+    """Test loading settings when file doesn't exist returns default settings."""
+    with patch("researcher.config.SETTINGS_FILE_PATH", Path("/nonexistent/path/settings.json")):
+        result = load_settings()
+        assert result == DEFAULT_SETTINGS
+        assert result["search_model"] == "llama3.2"
+        assert result["response_model"] == "llama3"
+        assert result["eval_model"] == "llama3.2:3b"
+        assert result["searxng_engine"] == "general"
+        assert result["searxng_lang"] == "ja"
+        assert result["searxng_safesearch"] == "off"
+
+
+def test_load_settings_valid():
+    """Test loading valid settings JSON file."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        import json
+        custom_settings = {
+            "search_model": "llama3.3",
+            "response_model": "llama3.1",
+            "eval_model": "llama3.2:1b",
+            "searxng_engine": "news",
+            "searxng_lang": "en",
+            "searxng_safesearch": "strict"
+        }
+        json.dump(custom_settings, f)
+        temp_path = f.name
+    
+    try:
+        with patch("researcher.config.SETTINGS_FILE_PATH", Path(temp_path)):
+            result = load_settings()
+            assert result["search_model"] == "llama3.3"
+            assert result["response_model"] == "llama3.1"
+            assert result["eval_model"] == "llama3.2:1b"
+            assert result["searxng_engine"] == "news"
+            assert result["searxng_lang"] == "en"
+            assert result["searxng_safesearch"] == "strict"
+    finally:
+        Path(temp_path).unlink()
+
+
+def test_load_settings_partial():
+    """Test loading settings with missing keys merges with defaults."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        import json
+        partial_settings = {
+            "search_model": "custom-model"
+            # Other keys missing
+        }
+        json.dump(partial_settings, f)
+        temp_path = f.name
+    
+    try:
+        with patch("researcher.config.SETTINGS_FILE_PATH", Path(temp_path)):
+            result = load_settings()
+            assert result["search_model"] == "custom-model"  # Custom value
+            assert result["response_model"] == "llama3"  # Default value
+            assert result["eval_model"] == "llama3.2:3b"  # Default value
+    finally:
+        Path(temp_path).unlink()
+
+
+def test_load_settings_invalid_json():
+    """Test loading settings with invalid JSON returns defaults."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        f.write("{ invalid json }")
+        temp_path = f.name
+    
+    try:
+        with patch("researcher.config.SETTINGS_FILE_PATH", Path(temp_path)):
+            result = load_settings()
+            assert result == DEFAULT_SETTINGS
+    finally:
+        Path(temp_path).unlink()
+
+
+def test_save_settings():
+    """Test saving settings to JSON file."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_path = Path(tmpdir) / "settings.json"
+        with patch("researcher.config.SETTINGS_FILE_PATH", temp_path):
+            custom_settings = {
+                "search_model": "llama3.3",
+                "response_model": "llama3.1",
+                "eval_model": "llama3.2:1b",
+                "searxng_engine": "news",
+                "searxng_lang": "en",
+                "searxng_safesearch": "strict"
+            }
+            success = save_settings(custom_settings)
+            
+            assert success is True
+            assert temp_path.exists()
+            
+            # Verify file content
+            import json
+            with open(temp_path, "r", encoding="utf-8") as f:
+                saved_data = json.load(f)
+                assert saved_data == custom_settings
+
+
+def test_save_settings_creates_directory():
+    """Test that save_settings creates parent directories."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_path = Path(tmpdir) / "subdir" / "nested" / "settings.json"
+        with patch("researcher.config.SETTINGS_FILE_PATH", temp_path):
+            settings = {"search_model": "test"}
+            success = save_settings(settings)
+            
+            assert success is True
+            assert temp_path.parent.exists()
+            assert temp_path.exists()
+
+
+def test_settings_atomic_write():
+    """Test that save_settings uses atomic write (temp file + replace)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_path = Path(tmpdir) / "settings.json"
+        with patch("researcher.config.SETTINGS_FILE_PATH", temp_path):
+            settings1 = {"search_model": "model1"}
+            save_settings(settings1)
+            
+            # Overwrite with new settings
+            settings2 = {"search_model": "model2", "response_model": "model2"}
+            success = save_settings(settings2)
+            
+            assert success is True
+            
+            # Verify new content
+            import json
+            with open(temp_path, "r", encoding="utf-8") as f:
+                saved_data = json.load(f)
+                assert saved_data == settings2

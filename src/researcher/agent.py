@@ -123,3 +123,147 @@ class QueryAgent:
         except Exception as exc:
             LOGGER.warning("Retry query generation failed: %s", exc)
             return original_query
+    
+    def generate_search_retry_query(
+        self, 
+        original_query: str, 
+        failure_reason: str = "unknown",
+        retry_count: int = 1
+    ) -> str:
+        """
+        検索失敗時の代替クエリを生成
+        
+        検索エンジンの応答がない場合、段階的にクエリを簡潔化・一般化して再試行を促す。
+        リトライ回数に応じて異なる戦略を採用:
+        - 1回目: クエリの簡潔化（複雑な演算子や括弧を削除）
+        - 2回目: キーワードの一般化（具体的な製品名から一般的な概念へ）
+        - 3回目: 最小限のキーワード（最重要キーワードのみ）
+        
+        Args:
+            original_query: 元のクエリ
+            failure_reason: 失敗の原因（"timeout", "connection_error", "http_error", "parse_error", "empty_results", "unknown"）
+            retry_count: リトライ回数（1, 2, 3）
+        
+        Returns:
+            新しい検索クエリ文字列、または失敗時は元のクエリ
+        """
+        if self.language == "ja":
+            if retry_count == 1:
+                # 1回目のリトライ：クエリの簡潔化
+                prompt = (
+                    f"検索エンジンが応答しません（原因: {failure_reason}）。\n"
+                    f"以下のクエリをより簡潔で単純な形に変更してください。\n"
+                    f"複雑な演算子（OR, AND, NOT）や括弧を避け、最も重要なキーワード3-5個に絞ってください。\n"
+                    f"元のクエリ: {original_query}\n"
+                    f"新しい検索クエリのみを出力してください（1行のみ）。"
+                )
+            elif retry_count == 2:
+                # 2回目のリトライ：キーワードの一般化
+                prompt = (
+                    f"検索エンジンが応答しません（原因: {failure_reason}）。\n"
+                    f"以下のクエリを、より一般的で広い範囲をカバーするクエリに変更してください。\n"
+                    f"具体的な製品名やバージョン番号よりも、一般的な概念や分野を優先してください。\n"
+                    f"例: 「ROG Flow Z13 2025」→「ノートパソコン」、「Ollama」→「ローカルLLM」\n"
+                    f"元のクエリ: {original_query}\n"
+                    f"新しい検索クエリのみを出力してください（1行のみ）。"
+                )
+            else:  # retry_count >= 3
+                # 3回目のリトライ：最後の試み
+                prompt = (
+                    f"検索エンジンが応答しません（原因: {failure_reason}）。\n"
+                    f"以下のクエリを、最も基本的で一般的な形に変更してください。\n"
+                    f"1-2個の最重要キーワードのみを使用してください。\n"
+                    f"元のクエリ: {original_query}\n"
+                    f"新しい検索クエリのみを出力してください（1行のみ）。"
+                )
+        else:  # English
+            if retry_count == 1:
+                prompt = (
+                    f"Search engine is not responding (reason: {failure_reason}).\n"
+                    f"Simplify the following query to be more concise and straightforward.\n"
+                    f"Avoid complex operators (OR, AND, NOT) or parentheses, and focus on 3-5 most important keywords.\n"
+                    f"Original query: {original_query}\n"
+                    f"Output only the new search query (single line only)."
+                )
+            elif retry_count == 2:
+                prompt = (
+                    f"Search engine is not responding (reason: {failure_reason}).\n"
+                    f"Broaden the following query to cover a wider range of information.\n"
+                    f"Prioritize general concepts and fields over specific product names or version numbers.\n"
+                    f"Example: 'ROG Flow Z13 2025' → 'laptop', 'Ollama' → 'local LLM'\n"
+                    f"Original query: {original_query}\n"
+                    f"Output only the new search query (single line only)."
+                )
+            else:
+                prompt = (
+                    f"Search engine is not responding (reason: {failure_reason}).\n"
+                    f"Reduce the following query to its most basic and general form.\n"
+                    f"Use only 1-2 most essential keywords.\n"
+                    f"Original query: {original_query}\n"
+                    f"Output only the new search query (single line only)."
+                )
+        
+        messages = [{"role": "system", "content": prompt}]
+        try:
+            response = self.ollama_client.generate_response(messages)
+            return response.strip() or original_query
+        except Exception as exc:
+            LOGGER.warning("Search retry query generation failed: %s", exc)
+            return original_query
+    
+    def generate_conversation_title(self, messages: List[Dict[str, str]], max_length: int = 50) -> str:
+        """
+        Generate a concise conversation title from message history using LLM.
+        
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+            max_length: Maximum title length (default: 50 characters)
+        
+        Returns:
+            Generated title (max_length characters)
+        """
+        # Extract recent user and assistant messages for context (last 3-5 messages)
+        recent_messages = [m for m in messages if m.get("role") in ["user", "assistant"]][-5:]
+        
+        conversation_text = ""
+        for msg in recent_messages:
+            role = "ユーザー" if msg["role"] == "user" else "AI"
+            conversation_text += f"{role}: {msg['content'][:200]}\n"
+        
+        if not conversation_text:
+            return "新しい会話"
+        
+        prompt = (
+            f"以下の会話から、会話の主要なトピックを表す簡潔なタイトルを生成してください。\n"
+            f"タイトルは{max_length}文字以内にしてください。\n"
+            f"タイトルのみを出力してください（説明や引用符は不要）。\n\n"
+            f"会話:\n{conversation_text}\n\n"
+            f"タイトル:"
+        ) if self.language == "ja" else (
+            f"Generate a concise title that captures the main topic of the following conversation.\n"
+            f"Keep the title within {max_length} characters.\n"
+            f"Output only the title (no explanations or quotes).\n\n"
+            f"Conversation:\n{conversation_text}\n\n"
+            f"Title:"
+        )
+        
+        title_messages = [{"role": "user", "content": prompt}]
+        try:
+            response = self.ollama_client.generate_response(title_messages)
+            title = response.strip()
+            
+            # Remove quotes if present
+            title = title.strip('"\'「」『』')
+            
+            # Truncate to max_length
+            if len(title) > max_length:
+                title = title[:max_length] + "..."
+            
+            return title if title else "新しい会話"
+        except Exception as exc:
+            LOGGER.warning("Conversation title generation failed: %s", exc)
+            # Fallback: use first user message
+            first_user_msg = next((msg['content'] for msg in messages if msg.get('role') == 'user'), None)
+            if first_user_msg:
+                return first_user_msg[:max_length] + ("..." if len(first_user_msg) > max_length else "")
+            return "新しい会話"

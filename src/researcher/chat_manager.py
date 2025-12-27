@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 import json
 import logging
 
@@ -21,6 +21,10 @@ class ChatManager:
         language: str = "ja",
         enable_self_evaluation: bool = False,
         enable_feedback_adjustment: bool = True,
+        evaluation_model: Optional[str] = None,
+        searxng_engine: Optional[str] = None,
+        searxng_lang: Optional[str] = None,
+        searxng_safesearch: Optional[str] = None,
     ):
         self.ollama_client = ollama_client
         self.searxng_client = searxng_client
@@ -32,11 +36,16 @@ class ChatManager:
         self.language = language
         self.enable_self_evaluation = enable_self_evaluation
         self.enable_feedback_adjustment = enable_feedback_adjustment
+        self.evaluation_model = evaluation_model  # Optional: separate model for evaluation
+        self.searxng_engine = searxng_engine
+        self.searxng_lang = searxng_lang
+        self.searxng_safesearch = searxng_safesearch
         self.messages = []
         self.current_citation_ids: List[int] = []
         self.last_search_content: str = ""  # Store crawled content from last search
         self.last_search_turns_remaining: int = 0  # Number of turns to keep injecting crawled content
         self.last_evaluation_score: Optional[Dict[str, Any]] = None  # Store latest evaluation score
+        self.pending_search_results: List[Dict[str, Any]] = []  # Store search results for next assistant message
 
     def add_system_message(self, content, search_result: bool = False):
         self.messages.append(
@@ -46,8 +55,11 @@ class ChatManager:
     def add_user_message(self, content):
         self.messages.append({"role": "user", "content": content})
 
-    def add_assistant_message(self, content):
-        self.messages.append({"role": "assistant", "content": content})
+    def add_assistant_message(self, content, search_results: Optional[List[Dict[str, Any]]] = None):
+        message = {"role": "assistant", "content": content}
+        if search_results:
+            message["search_results"] = search_results
+        self.messages.append(message)
 
     def _get_rag_system_prompt(self) -> str:
         """Get language-aware RAG system message template with strict instruction to ignore training knowledge."""
@@ -110,6 +122,27 @@ class ChatManager:
             # Silently fall back to base RAG prompt if adjustment fails
             LOGGER.debug(f"Feedback adjustment failed: {e}")
             return self._get_rag_system_prompt()
+    
+    def _get_search_failure_system_message(self) -> str:
+        """
+        検索失敗時にLLMに注入するシステムメッセージを生成
+        
+        LLMが訓練データに基づくハルシネーションを避け、検索失敗を明示的に
+        ユーザーに伝えるよう指示するメッセージを返します。
+        
+        Returns:
+            言語設定に応じた検索失敗メッセージ
+        """
+        if self.language == "en":
+            return (
+                "Search failed. Unable to provide up-to-date information. "
+                "Please avoid responses based on training data and inform the user that the search failed."
+            )
+        else:
+            return (
+                "検索に失敗したため最新情報を提供できません。"
+                "訓練データに基づく回答を避け、検索失敗をユーザーに伝えてください。"
+            )
 
     def get_response(self, evaluation_threshold: float = 0.7):
         # Build messages with optional crawled content injection
@@ -131,7 +164,8 @@ class ChatManager:
         citations_md = self._format_citations_markdown()
         if citations_md:
             response = response + "\n\n" + citations_md
-        self.add_assistant_message(response)
+        self.add_assistant_message(response, search_results=self.pending_search_results)
+        self.pending_search_results = []
         self.current_citation_ids.clear()
         
         # Get last user query for evaluation
@@ -153,6 +187,7 @@ class ChatManager:
                         # Auto-search and regenerate
                         LOGGER.info(f"Response quality low (score: {overall_score:.2f}), executing retry {MAX_SELF_EVAL_RETRIES - retries_remaining + 1}/{MAX_SELF_EVAL_RETRIES}")
                         auto_result = self.auto_search(last_user_query)
+                        self.pending_search_results = auto_result.get("all_search_results", [])
                         if auto_result.get("searched"):
                             # Re-generate response with search context
                             self.messages.pop()  # Remove previous response
@@ -173,7 +208,8 @@ class ChatManager:
                             citations_md = self._format_citations_markdown()
                             if citations_md:
                                 response = response + "\n\n" + citations_md
-                            self.add_assistant_message(response)
+                            self.add_assistant_message(response, search_results=self.pending_search_results)
+                            self.pending_search_results = []
                             self.current_citation_ids.clear()
                         else:
                             break  # No search results, stop retrying
@@ -221,7 +257,8 @@ class ChatManager:
             if citations_md:
                 yield "\n\n" + citations_md
                 response = response + "\n\n" + citations_md
-            self.add_assistant_message(response)
+            self.add_assistant_message(response, search_results=self.pending_search_results)
+            self.pending_search_results = []
             self.current_citation_ids.clear()
             
             # Get last user query for evaluation
@@ -233,9 +270,11 @@ class ChatManager:
             
             # Self-evaluation with explicit loop-based retry (not recursive)
             if self.enable_self_evaluation and last_user_query:
+                LOGGER.debug(f"Starting self-evaluation: enable={self.enable_self_evaluation}, query={bool(last_user_query)}")
                 retries_remaining = MAX_SELF_EVAL_RETRIES
                 while retries_remaining > 0:
                     eval_result = self.self_evaluate(last_user_query, response)
+                    LOGGER.debug(f"Evaluation completed: {eval_result}")
                     overall_score = eval_result.get("overall_score", 0.5)
                     
                     if overall_score < evaluation_threshold and self.searxng_client and self.agent and retries_remaining > 0:
@@ -243,6 +282,7 @@ class ChatManager:
                             # Auto-search and regenerate
                             LOGGER.info(f"Response quality low (score: {overall_score:.2f}), executing retry {MAX_SELF_EVAL_RETRIES - retries_remaining + 1}/{MAX_SELF_EVAL_RETRIES}")
                             auto_result = self.auto_search(last_user_query)
+                            self.pending_search_results = auto_result.get("all_search_results", [])
                             if auto_result.get("searched"):
                                 # Re-generate response with search context (non-recursive)
                                 self.messages.pop()  # Remove previous response
@@ -270,7 +310,8 @@ class ChatManager:
                                     yield "\n\n" + retry_citations_md
                                     retry_response = retry_response + "\n\n" + retry_citations_md
                                 
-                                self.add_assistant_message(retry_response)
+                                self.add_assistant_message(retry_response, search_results=self.pending_search_results)
+                                self.pending_search_results = []
                                 self.current_citation_ids.clear()
                                 response = retry_response  # Update for final evaluation
                             else:
@@ -283,6 +324,9 @@ class ChatManager:
                     else:
                         # Score is acceptable or no retry available
                         break
+                
+                # 評価処理完了をログに記録
+                LOGGER.info(f"Self-evaluation finished: last_evaluation_score set to {self.last_evaluation_score}")
             
             # Decrement the remaining turns and clear if expired
             if self.last_search_turns_remaining > 0:
@@ -292,42 +336,150 @@ class ChatManager:
 
         return stream()
 
-    def search(self, query: str, *, use_reranker: bool = True, previous_keywords: Optional[List[str]] = None, **kwargs: Any) -> Dict[str, Any]:
+    def search(self, query: str, *, use_reranker: bool = True, previous_keywords: Optional[List[str]] = None, progress_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None, **kwargs: Any) -> Dict[str, Any]:
         if not self.searxng_client:
             raise RuntimeError("検索機能が有効化されていません")
 
-        payload = self.searxng_client.search(query, **kwargs)
-        results = payload.get("results", [])
-        
-        # Reranker は embedding 取得に失敗することが多いため、結果が 0 になった場合は元の結果を使用
-        if use_reranker and self.reranker is not None:
+        # 検索リトライループの初期化
+        current_query = query
+        search_retry_count = 0
+        max_search_retries = 3
+        payload = None
+        results = []
+        all_search_results = []  # Collect all search results including retries
+
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"検索開始: {query}")
+
+        # 検索リトライループ（最大3回）
+        while search_retry_count < max_search_retries:
             try:
-                reranked_results = self.reranker.rerank(query, results)
-                if reranked_results:  # reranked結果がある場合のみ使用
-                    results = reranked_results
-            except Exception:
-                # rerank失敗時は元の結果を使用（サイレントフォールバック）
-                pass
-        
-        # CitationManagerで引用を追加（エラーハンドリング付き）
-        # Store citation_id directly on result dict to maintain mapping even if some citations fail
-        self.current_citation_ids.clear()
-        if self.citation_manager:
-            for result in results:
-                try:
-                    citation_id = self.citation_manager.add_citation(
-                        url=result.get("url", ""),
-                        title=result.get("title", ""),
-                        snippet=result.get("snippet", ""),
-                        date_str=result.get("published_date"),
-                        relevance_score=result.get("score", 0.5),
+                # Build SearXNG parameters
+                searxng_params = {}
+                if self.searxng_engine:
+                    searxng_params["engines"] = self.searxng_engine
+                if self.searxng_lang:
+                    searxng_params["language"] = self.searxng_lang
+                if self.searxng_safesearch:
+                    searxng_params["safesearch"] = self.searxng_safesearch
+                
+                # Merge with user-provided kwargs (user kwargs take precedence)
+                searxng_params.update(kwargs)
+                
+                payload = self.searxng_client.search(current_query, **searxng_params)
+                results = payload.get("results", [])
+                
+                # 結果が空の場合も失敗とみなす
+                if not results:
+                    raise RuntimeError(f"検索結果が空です: {current_query}")
+                
+                # 成功した場合はループを抜ける
+                logger.info(f"検索成功: {len(results)}件の結果を取得")
+                
+                # Apply reranker immediately to search results before adding to all_search_results
+                if use_reranker and self.reranker is not None:
+                    try:
+                        reranked_results = self.reranker.rerank(current_query, results)
+                        if reranked_results:  # reranked結果がある場合のみ使用
+                            results = reranked_results
+                    except Exception:
+                        # rerank失敗時は元の結果を使用（サイレントフォールバック）
+                        pass
+                
+                # Add citations and accumulate to all_search_results for this attempt
+                if self.citation_manager:
+                    for result in results:
+                        try:
+                            citation_id = self.citation_manager.add_citation(
+                                url=result.get("url", ""),
+                                title=result.get("title", ""),
+                                snippet=result.get("snippet", ""),
+                                date_str=result.get("published_date"),
+                                relevance_score=result.get("score", 0.5),
+                            )
+                            result["_citation_id"] = citation_id
+                            self.current_citation_ids.append(citation_id)
+                            
+                            # Add to all_search_results immediately
+                            citation = self.citation_manager.get_citation(citation_id)
+                            all_search_results.append({
+                                "title": result.get("title", ""),
+                                "url": result.get("url", ""),
+                                "snippet": result.get("snippet", ""),
+                                "date": result.get("published_date"),
+                                "citation_id": citation_id,
+                                "relevance_score": result.get("score", 0.5),
+                                "credibility_score": citation.get("credibility_score", 0.5)
+                            })
+                        except Exception:
+                            # Citation追加に失敗してもサーチ全体は続行
+                            continue
+                
+                break
+                
+            except RuntimeError as exc:
+                search_retry_count += 1
+                failure_reason = self._extract_failure_reason(str(exc))
+                logger.warning(f"検索失敗 (試行 {search_retry_count}/{max_search_retries}): {exc}")
+                
+                # プログレスコールバック: リトライ開始
+                if progress_callback:
+                    progress_callback("retry_start", {
+                        "retry_count": search_retry_count,
+                        "max_retries": max_search_retries,
+                        "query": current_query,
+                        "error": str(exc)
+                    })
+                
+                if search_retry_count >= max_search_retries:
+                    # すべてのリトライが失敗
+                    logger.error(f"検索が最大リトライ回数に達しました: {query}")
+                    # プログレスコールバック: 最終失敗
+                    if progress_callback:
+                        progress_callback("all_retries_failed", {
+                            "query": query,
+                            "max_retries": max_search_retries
+                        })
+                    # 検索失敗をLLMに明示的に通知
+                    self.add_system_message(self._get_search_failure_system_message())
+                    # 古い引用とクロール状態をクリアして次回答への混入を防止
+                    self.current_citation_ids.clear()
+                    self.last_search_content = ""
+                    self.last_search_turns_remaining = 0
+                    return {
+                        "formatted": "",
+                        "raw": {},
+                        "results": [],
+                        "search_failed": True
+                    }
+                
+                # 検索失敗専用のリトライクエリを生成
+                if self.agent:
+                    current_query = self.agent.generate_search_retry_query(
+                        query,
+                        failure_reason=failure_reason,
+                        retry_count=search_retry_count
                     )
-                    # Store citation_id on result dict for later use
-                    result["_citation_id"] = citation_id
-                    self.current_citation_ids.append(citation_id)
-                except Exception:
-                    # Citation追加に失敗してもサーチ全体は続行
-                    continue
+                    logger.info(f"代替クエリで再試行 (試行 {search_retry_count}/{max_search_retries}): {current_query}")
+                    # プログレスコールバック: 代替クエリ生成
+                    if progress_callback:
+                        progress_callback("query_generated", {
+                            "retry_count": search_retry_count,
+                            "new_query": current_query,
+                            "failure_reason": failure_reason,
+                            "max_retries": max_search_retries
+                        })
+                else:
+                    # agentがない場合は元のクエリで再試行
+                    logger.warning("Agentが設定されていないため、元のクエリで再試行します")
+                
+                # プログレスコールバック: リトライ試行前
+                if progress_callback:
+                    progress_callback("retry_attempt", {
+                        "retry_count": search_retry_count,
+                        "query": current_query
+                    })
         
         # Crawl top URLs to extract content for RAG context and update citations
         self.last_search_content = ""
@@ -369,7 +521,19 @@ class ChatManager:
                         
                         # Retry search
                         try:
-                            retry_payload = self.searxng_client.search(retry_query, **kwargs)
+                            # Build SearXNG parameters (same as main search loop)
+                            retry_searxng_params = {}
+                            if self.searxng_engine:
+                                retry_searxng_params["engines"] = self.searxng_engine
+                            if self.searxng_lang:
+                                retry_searxng_params["language"] = self.searxng_lang
+                            if self.searxng_safesearch:
+                                retry_searxng_params["safesearch"] = self.searxng_safesearch
+                            
+                            # Merge with user-provided kwargs (user kwargs take precedence)
+                            retry_searxng_params.update(kwargs)
+                            
+                            retry_payload = self.searxng_client.search(retry_query, **retry_searxng_params)
                             retry_results = retry_payload.get("results", [])
                             
                             # Apply reranker to retry results
@@ -385,6 +549,33 @@ class ChatManager:
                             for r in retry_results:
                                 if r.get("url") and r["url"] not in all_results:
                                     all_results[r["url"]] = r
+                                    
+                                    # Add citation and accumulate to all_search_results for retry attempt
+                                    if self.citation_manager and "_citation_id" not in r:
+                                        try:
+                                            citation_id = self.citation_manager.add_citation(
+                                                url=r.get("url", ""),
+                                                title=r.get("title", ""),
+                                                snippet=r.get("snippet", ""),
+                                                date_str=r.get("published_date"),
+                                                relevance_score=r.get("score", 0.5),
+                                            )
+                                            r["_citation_id"] = citation_id
+                                            self.current_citation_ids.append(citation_id)
+                                            
+                                            # Add to all_search_results for this retry attempt
+                                            citation = self.citation_manager.get_citation(citation_id)
+                                            all_search_results.append({
+                                                "title": r.get("title", ""),
+                                                "url": r.get("url", ""),
+                                                "snippet": r.get("snippet", ""),
+                                                "date": r.get("published_date"),
+                                                "citation_id": citation_id,
+                                                "relevance_score": r.get("score", 0.5),
+                                                "credibility_score": citation.get("credibility_score", 0.5)
+                                            })
+                                        except Exception:
+                                            pass
                             
                             # Retry crawl
                             if self.web_crawler:
@@ -398,24 +589,6 @@ class ChatManager:
                     # Reflect consolidated results back to results list (URL-bearing + URL-less)
                     results = list(all_results.values()) + url_less_results
                     logger.info("Final integrated results: %d items", len(results))
-                    
-                    # Ensure all results have citations
-                    if self.citation_manager:
-                        for result in results:
-                            if "_citation_id" not in result:
-                                try:
-                                    citation_id = self.citation_manager.add_citation(
-                                        url=result.get("url", ""),
-                                        title=result.get("title", ""),
-                                        snippet=result.get("snippet", ""),
-                                        date_str=result.get("published_date"),
-                                        relevance_score=result.get("score", 0.5),
-                                    )
-                                    result["_citation_id"] = citation_id
-                                    self.current_citation_ids.append(citation_id)
-                                except Exception:
-                                    # Citation追加に失敗してもサーチ全体は続行
-                                    continue
 
                 
                 if crawled_content:
@@ -444,15 +617,21 @@ class ChatManager:
         
         formatted = self._format_search_results(query, results)
         self.add_system_message(formatted, search_result=True)
-        return {"formatted": formatted, "raw": payload.get("raw", payload), "results": results}
+        return {
+            "formatted": formatted, 
+            "raw": payload.get("raw", payload) if payload else {}, 
+            "results": results,
+            "all_search_results": all_search_results,
+            "search_failed": False
+        }
 
-    def auto_search(self, query: str) -> Dict[str, Any]:
+    def auto_search(self, query: str, progress_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None) -> Dict[str, Any]:
         if not self.agent:
             raise RuntimeError("Agentが設定されていません")
 
         analysis = self.agent.analyze_query(query)
         if not analysis.get("needs_search"):
-            return {"searched": False, "formatted": "", "results": [], "analysis": analysis}
+            return {"searched": False, "formatted": "", "results": [], "analysis": analysis, "search_failed": False}
 
         # キーワードが返された場合は、元のクエリを補強
         # trim、空文字値除外、重複排除を実施
@@ -472,14 +651,57 @@ class ChatManager:
             # キーワードなしの場合は元のクエリを使用
             search_query = query
         
-        search_result = self.search(search_query, previous_keywords=keywords)
+        search_result = self.search(search_query, previous_keywords=keywords, progress_callback=progress_callback)
+        
+        # 検索失敗時の処理
+        if search_result.get("search_failed", False):
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"自動検索が失敗しました: {query}")
+            # 注: search()が既に失敗メッセージを追加しているため、ここでは追加しない
+            return {
+                "searched": False,
+                "formatted": "",
+                "results": [],
+                "all_search_results": [],
+                "analysis": analysis,
+                "search_failed": True
+            }
+        
         return {
             "searched": True,
             "formatted": search_result["formatted"],
             "results": search_result["results"],
+            "all_search_results": search_result.get("all_search_results", []),
             "analysis": analysis,
+            "search_failed": False
         }
 
+    def _extract_failure_reason(self, error_message: str) -> str:
+        """
+        エラーメッセージから検索失敗の原因を抽出
+        
+        Args:
+            error_message: エラーメッセージ文字列
+        
+        Returns:
+            失敗原因を示す文字列（"timeout", "connection_error", "http_error", "parse_error", "empty_results", "unknown"）
+        """
+        error_lower = error_message.lower()
+        
+        if "timeout" in error_lower or "timed out" in error_lower:
+            return "timeout"
+        elif "connection" in error_lower or "接続" in error_message:
+            return "connection_error"
+        elif "http" in error_lower or "status" in error_lower or "403" in error_message or "500" in error_message:
+            return "http_error"
+        elif "parse" in error_lower or "html" in error_lower or "パース" in error_message:
+            return "parse_error"
+        elif "empty" in error_lower or "見つかりません" in error_message or "結果が空" in error_message:
+            return "empty_results"
+        else:
+            return "unknown"
+    
     def _format_search_results(self, query: str, results: List[Dict[str, Any]]) -> str:
         lines = [f"[検索結果: {query}]"]
         if not results:
@@ -528,10 +750,11 @@ class ChatManager:
         return self.last_evaluation_score
 
     def self_evaluate(self, query: str, response: str) -> Dict[str, Any]:
-        """Evaluate response quality using LLM self-evaluation with JSON output.
+        """Evaluate response quality using LLM self-evaluation with source injection.
         
-        Returns evaluation scores including accuracy_score, freshness_score, overall_score, and reasoning.
-        On JSON parse failure, returns safe default values.
+        Injects last_search_content (crawled sources) into evaluation prompt
+        to ensure evaluation is based on actual sources, not training data.
+        Uses separate evaluation model if configured, otherwise uses response model.
         
         Args:
             query: Original user query
@@ -550,35 +773,59 @@ class ChatManager:
             }
         
         try:
-            # Build evaluation prompt
+            # Prepare source context for evaluation
+            sources = ""
+            if self.last_search_content and self.last_search_turns_remaining > 0:
+                sources = f"\n\n[Source Information]\n{self.last_search_content}\n"
+            
+            # Build evaluation prompt with source injection
             if self.language == "en":
                 eval_prompt = (
-                    f"Evaluate the following assistant response for accuracy and freshness.\n"
-                    f"Return ONLY a JSON object with these fields:\n"
-                    f"- accuracy_score (0-1): Is the response factually correct?\n"
-                    f"- freshness_score (0-1): Is the response current/up-to-date?\n"
-                    f"- overall_score (0-1): Overall quality score\n"
-                    f"- reasoning (string): Brief explanation\n\n"
+                    f"Evaluate the following assistant response ONLY based on the provided source information. "
+                    f"Completely ignore your training knowledge and knowledge cutoff date.\n"
+                    f"{sources}\n"
                     f"User Query: {query}\n"
                     f"Response: {response}\n\n"
+                    f"Return ONLY a JSON object with these fields:\n"
+                    f"- accuracy_score (0-1): Is the response factually correct based on sources?\n"
+                    f"- freshness_score (0-1): Is the response current/up-to-date based on sources?\n"
+                    f"- overall_score (0-1): Overall quality score\n"
+                    f"- reasoning (string): Brief explanation referencing sources\n\n"
                     f"Return ONLY valid JSON, no other text."
                 )
             else:
                 eval_prompt = (
-                    f"以下のアシスタント応答の正確性と最新性を評価してください。\n"
-                    f"以下のフィールドを含むJSONオブジェクトをRETURNしてください:\n"
-                    f"- accuracy_score (0-1): 応答は事実上正確ですか？\n"
-                    f"- freshness_score (0-1): 応答は最新の情報ですか？\n"
-                    f"- overall_score (0-1): 全体的な品質スコア\n"
-                    f"- reasoning (string): 簡潔な説明\n\n"
+                    f"以下のアシスタント応答を、提供されたソース情報のみに基づいて評価してください。"
+                    f"あなたの訓練知識や知識カットオフ日を完全に無視してください。\n"
+                    f"{sources}\n"
                     f"ユーザークエリ: {query}\n"
                     f"応答: {response}\n\n"
+                    f"以下のフィールドを含むJSONオブジェクトのみを返してください:\n"
+                    f"- accuracy_score (0-1): ソースに基づいて応答は事実上正確ですか？\n"
+                    f"- freshness_score (0-1): ソースに基づいて応答は最新の情報ですか？\n"
+                    f"- overall_score (0-1): 全体的な品質スコア\n"
+                    f"- reasoning (string): ソースを参照した簡潔な説明\n\n"
                     f"JSONのみを返してください。他のテキストは不要です。"
                 )
             
-            # Call LLM for evaluation
-            messages = [{"role": "user", "content": eval_prompt}]
-            eval_response = self.ollama_client.generate_response(messages)
+            # Use evaluation model (or fallback to response model)
+            eval_model = self.evaluation_model or self.ollama_client.model
+            
+            # Temporarily switch model for evaluation if using separate model
+            original_model = None
+            if self.evaluation_model and self.evaluation_model != self.ollama_client.model:
+                original_model = self.ollama_client.model
+                self.ollama_client.model = self.evaluation_model
+                LOGGER.debug(f"Switched to evaluation model: {self.evaluation_model}")
+            
+            try:
+                messages = [{"role": "user", "content": eval_prompt}]
+                eval_response = self.ollama_client.generate_response(messages)
+            finally:
+                # Restore original model if it was changed
+                if original_model is not None:
+                    self.ollama_client.model = original_model
+                    LOGGER.debug(f"Restored response model: {original_model}")
             
             # Parse JSON response
             try:
@@ -605,7 +852,7 @@ class ChatManager:
                     
                     # Log evaluation results
                     LOGGER.info(
-                        f"Self-evaluation completed: "
+                        f"Self-evaluation completed (model={eval_model}, sources={'yes' if sources else 'no'}): "
                         f"accuracy={result['accuracy_score']:.2f}, "
                         f"freshness={result['freshness_score']:.2f}, "
                         f"overall={result['overall_score']:.2f} | "

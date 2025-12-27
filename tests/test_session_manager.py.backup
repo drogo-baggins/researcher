@@ -1,0 +1,1762 @@
+"""
+Unit tests for SessionManager (V2 Schema).
+
+Tests cover CRUD operations for sessions and exchanges, tag management,
+persistence, error handling, and search functionality.
+
+V2 Schema:
+- sessions table: id, name, tags (JSON), created_at, updated_at
+- exchanges table: id, session_id (FK), user_message, assistant_message,
+                   model, language, search_results (JSON), evaluation_score (JSON),
+                   created_at
+
+Removed: session_groups table and all group-related methods
+"""
+
+import json
+import sqlite3
+import pytest
+from pathlib import Path
+
+from researcher.session_manager import SessionManager
+
+
+@pytest.fixture
+def temp_db_path(tmp_path):
+    """Provide a temporary database path for testing."""
+    return tmp_path / "test_sessions.db"
+
+
+@pytest.fixture
+def session_manager(temp_db_path):
+    """Create a SessionManager with temporary database.
+    
+    Note: This fixture expects V2 schema to be initialized.
+    Run migrate_db.py first if testing against an existing database.
+    """
+    # Initialize with migrate_db to ensure V2 schema
+    import sys
+    from pathlib import Path
+    project_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(project_root))
+    
+    from migrate_db import run_migrations
+    run_migrations(temp_db_path)
+    
+    return SessionManager(db_path=temp_db_path)
+
+
+# ============================================================================
+# V2 Schema: Core CRUD Tests
+# ============================================================================
+
+def test_create_session_success(session_manager):
+    """Test successful session creation with V2 schema."""
+    session_id = session_manager.create_session("Test Session", tags=["python", "ai"])
+    
+    assert session_id is not None
+    assert isinstance(session_id, int)
+    
+    # Verify in database
+    loaded = session_manager.load_session(session_id)
+    assert loaded is not None
+    assert loaded["name"] == "Test Session"
+    assert loaded["tags"] == ["python", "ai"]
+    assert loaded["exchanges"] == []
+
+
+def test_save_and_load_exchanges(session_manager):
+    """Test saving and loading exchanges."""
+    session_id = session_manager.create_session("Test", tags=["test"])
+    
+    # Save first exchange
+    exchange1_id = session_manager.save_exchange(
+        session_id, "Hello", "Hi there!", "gpt-oss:20b", "ja"
+    )
+    assert exchange1_id is not None
+    
+    # Save second exchange
+    exchange2_id = session_manager.save_exchange(
+        session_id, "How are you?", "I'm doing well!", "gpt-oss:20b", "ja"
+    )
+    assert exchange2_id is not None
+    
+    # Load and verify
+    loaded = session_manager.load_session(session_id)
+    assert len(loaded["exchanges"]) == 2
+    assert loaded["exchanges"][0]["user_message"] == "Hello"
+    assert loaded["exchanges"][0]["assistant_message"] == "Hi there!"
+    assert loaded["exchanges"][1]["user_message"] == "How are you?"
+
+
+def test_exchanges_ordered_by_created_at(session_manager):
+    """Test exchanges are returned in chronological order."""
+    session_id = session_manager.create_session("Test")
+    
+    # Save three exchanges
+    session_manager.save_exchange(session_id, "Q1", "A1", "gpt-oss:20b", "ja")
+    session_manager.save_exchange(session_id, "Q2", "A2", "gpt-oss:20b", "ja")
+    session_manager.save_exchange(session_id, "Q3", "A3", "gpt-oss:20b", "ja")
+    
+    # Load and verify order
+    loaded = session_manager.load_session(session_id)
+    assert loaded["exchanges"][0]["user_message"] == "Q1"
+    assert loaded["exchanges"][1]["user_message"] == "Q2"
+    assert loaded["exchanges"][2]["user_message"] == "Q3"
+
+
+def test_list_sessions_ordered_by_updated_at(session_manager):
+    """Test listing sessions in correct order (newest first)."""
+    import time
+    
+    # Create three sessions
+    id1 = session_manager.create_session("Session 1")
+    time.sleep(0.01)
+    id2 = session_manager.create_session("Session 2")
+    time.sleep(0.01)
+    id3 = session_manager.create_session("Session 3")
+    
+    # Add exchange to id1 to make it most recent
+    time.sleep(0.01)
+    session_manager.save_exchange(id1, "Q", "A", "gpt-oss:20b", "ja")
+    
+    # List sessions
+    sessions = session_manager.list_sessions()
+    
+    # Verify order: id1 should be first (most recently updated)
+    assert len(sessions) == 3
+    assert sessions[0]["id"] == id1
+
+
+def test_delete_session(session_manager):
+    """Test session deletion (cascades to exchanges)."""
+    session_id = session_manager.create_session("To Delete")
+    
+    # Add exchange
+    session_manager.save_exchange(session_id, "Q", "A", "gpt-oss:20b", "ja")
+    
+    # Verify it exists
+    loaded = session_manager.load_session(session_id)
+    assert loaded is not None
+    assert len(loaded["exchanges"]) == 1
+    
+    # Delete
+    deleted = session_manager.delete_session(session_id)
+    assert deleted is True
+    
+    # Verify it's gone
+    loaded = session_manager.load_session(session_id)
+    assert loaded is None
+
+
+def test_foreign_key_constraint_blocks_invalid_session_id(session_manager):
+    """Test that foreign key constraint blocks exchanges with invalid session_id."""
+    # Attempt to save exchange with non-existent session_id
+    exchange_id = session_manager.save_exchange(
+        99999, "Q", "A", "gpt-oss:20b", "ja"
+    )
+    
+    # Should fail (return None)
+    assert exchange_id is None
+
+
+def test_search_sessions_by_name(session_manager):
+    """Test searching sessions by name."""
+    session_manager.create_session("Python Tutorial", tags=["python"])
+    session_manager.create_session("JavaScript Guide", tags=["js"])
+    session_manager.create_session("Python Advanced", tags=["python"])
+    
+    # Search for "Python"
+    results = session_manager.search_sessions("Python")
+    
+    assert len(results) == 2
+    assert all("Python" in r["name"] for r in results)
+
+
+def test_search_sessions_by_exchange_content(session_manager):
+    """Test searching sessions by exchange message content."""
+    session_id = session_manager.create_session("Test Session")
+    
+    session_manager.save_exchange(
+        session_id, "Tell me about machine learning", 
+        "Machine learning is...", "gpt-oss:20b", "ja"
+    )
+    
+    # Search for content in exchange
+    results = session_manager.search_sessions("machine learning")
+    
+    assert len(results) >= 1
+    assert any(r["id"] == session_id for r in results)
+
+
+def test_search_sessions_by_tags(session_manager):
+    """Test searching sessions by tags."""
+    session_manager.create_session("Test", tags=["AI", "Python"])
+    
+    # Search for tag
+    results = session_manager.search_sessions("Python")
+    
+    assert len(results) >= 1
+    assert any("Python" in r["tags"] for r in results)
+
+
+def test_rename_session(session_manager):
+    """Test renaming a session."""
+    session_id = session_manager.create_session("Old Name")
+    
+    # Rename
+    renamed = session_manager.rename_session(session_id, "New Name")
+    assert renamed is True
+    
+    # Verify new name
+    loaded = session_manager.load_session(session_id)
+    assert loaded["name"] == "New Name"
+
+
+def test_rename_session_updates_timestamp(session_manager):
+    """Test that renaming updates the updated_at timestamp."""
+    import time
+    
+    session_id = session_manager.create_session("Test")
+    loaded1 = session_manager.load_session(session_id)
+    timestamp1 = loaded1["updated_at"]
+    
+    time.sleep(0.1)
+    session_manager.rename_session(session_id, "Renamed")
+    
+    loaded2 = session_manager.load_session(session_id)
+    timestamp2 = loaded2["updated_at"]
+    
+    assert timestamp2 > timestamp1
+
+
+def test_db_path_creation(tmp_path):
+    """Test automatic directory creation for database path."""
+    import sys
+    from pathlib import Path
+    project_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(project_root))
+    from migrate_db import run_migrations
+    
+    # Use a nested path that doesn't exist yet
+    db_path = tmp_path / "nested" / "path" / "test.db"
+    
+    # Initialize with migrations
+    run_migrations(db_path)
+    
+    # Should not raise error
+    manager = SessionManager(db_path=db_path)
+    
+    # Verify directory was created
+    assert db_path.parent.exists()
+    
+    # Verify database is usable
+    session_id = manager.create_session("Test")
+    assert session_id is not None
+
+
+# ============================================================================
+# V2 Schema: Tag Management Tests
+# ============================================================================
+
+def test_update_session_tags(session_manager):
+    """Test updating session tags."""
+    session_id = session_manager.create_session("Test", tags=["old"])
+    
+    # Update tags
+    result = session_manager.update_session_tags(session_id, ["new", "tags"])
+    assert result is True
+    
+    # Verify
+    loaded = session_manager.load_session(session_id)
+    assert loaded["tags"] == ["new", "tags"]
+
+
+def test_update_session_tags_updates_timestamp(session_manager):
+    """Test that updating tags also updates updated_at."""
+    import time
+    
+    session_id = session_manager.create_session("Test")
+    loaded1 = session_manager.load_session(session_id)
+    timestamp1 = loaded1["updated_at"]
+    
+    time.sleep(0.1)
+    session_manager.update_session_tags(session_id, ["new"])
+    
+    loaded2 = session_manager.load_session(session_id)
+    timestamp2 = loaded2["updated_at"]
+    
+    assert timestamp2 > timestamp1
+
+
+def test_update_tags_for_invalid_session(session_manager):
+    """Test updating tags for non-existent session."""
+    # Should return True (UPDATE with no rows is still successful in SQLite)
+    result = session_manager.update_session_tags(99999, ["test"])
+    assert result is True
+
+
+def test_get_all_tags_aggregation(session_manager):
+    """Test getting all unique tags across sessions."""
+    session_manager.create_session("S1", tags=["AI", "Python"])
+    session_manager.create_session("S2", tags=["Python", "Web"])
+    session_manager.create_session("S3", tags=["AI", "ML"])
+    
+    all_tags = session_manager.get_all_tags()
+    
+    # Should have unique tags, sorted
+    assert set(all_tags) == {"AI", "ML", "Python", "Web"}
+    assert all_tags == sorted(all_tags)
+
+
+def test_get_all_tags_empty(session_manager):
+    """Test getting tags when no sessions have tags."""
+    session_manager.create_session("S1")
+    session_manager.create_session("S2")
+    
+    all_tags = session_manager.get_all_tags()
+    assert all_tags == []
+
+
+# ============================================================================
+# V2 Schema: List Filtering Tests
+# ============================================================================
+
+def test_list_sessions_with_tag_filter_single(session_manager):
+    """Test filtering sessions by single tag."""
+    id1 = session_manager.create_session("S1", tags=["AI", "Python"])
+    id2 = session_manager.create_session("S2", tags=["Web"])
+    id3 = session_manager.create_session("S3", tags=["AI", "ML"])
+    
+    # Filter by single tag
+    sessions = session_manager.list_sessions(tags=["AI"])
+    
+    assert len(sessions) == 2
+    assert set(s["id"] for s in sessions) == {id1, id3}
+
+
+def test_list_sessions_with_tag_filter_multiple_and_logic(session_manager):
+    """Test filtering sessions by multiple tags (AND logic)."""
+    id1 = session_manager.create_session("S1", tags=["AI", "Python"])
+    id2 = session_manager.create_session("S2", tags=["AI", "ML"])
+    id3 = session_manager.create_session("S3", tags=["Python", "Web"])
+    
+    # Filter by multiple tags (AND)
+    sessions = session_manager.list_sessions(tags=["AI", "Python"])
+    
+    assert len(sessions) == 1
+    assert sessions[0]["id"] == id1
+
+
+def test_list_sessions_with_date_range_filter(session_manager):
+    """Test filtering sessions by date range."""
+    # Create sessions with manual dates
+    id1 = session_manager.create_session("S1")
+    id2 = session_manager.create_session("S2")
+    id3 = session_manager.create_session("S3")
+    
+    # Update created_at manually
+    with sqlite3.connect(session_manager.db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("UPDATE sessions SET created_at = ? WHERE id = ?", ("2025-01-15", id1))
+        conn.execute("UPDATE sessions SET created_at = ? WHERE id = ?", ("2025-02-20", id2))
+        conn.execute("UPDATE sessions SET created_at = ? WHERE id = ?", ("2025-03-10", id3))
+        conn.commit()
+    
+    # Filter by date range
+    sessions = session_manager.list_sessions(date_from="2025-02-01", date_to="2025-02-28")
+    
+    assert len(sessions) == 1
+    assert sessions[0]["id"] == id2
+
+
+def test_list_sessions_returns_exchange_count(session_manager):
+    """Test that list_sessions returns exchange_count field."""
+    id1 = session_manager.create_session("S1")
+    id2 = session_manager.create_session("S2")
+    
+    # Add exchanges
+    session_manager.save_exchange(id1, "Q1", "A1", "gpt-oss:20b", "ja")
+    session_manager.save_exchange(id1, "Q2", "A2", "gpt-oss:20b", "ja")
+    session_manager.save_exchange(id2, "Q1", "A1", "gpt-oss:20b", "ja")
+    
+    # List sessions
+    sessions = session_manager.list_sessions()
+    
+    session1 = next(s for s in sessions if s["id"] == id1)
+    session2 = next(s for s in sessions if s["id"] == id2)
+    
+    assert session1["exchange_count"] == 2
+    assert session2["exchange_count"] == 1
+
+
+def test_list_sessions_with_limit_and_offset(session_manager):
+    """Test pagination with limit and offset."""
+    # Create 5 sessions
+    for i in range(5):
+        session_manager.create_session(f"Session {i}")
+    
+    # Get first 2
+    page1 = session_manager.list_sessions(limit=2, offset=0)
+    assert len(page1) == 2
+    
+    # Get next 2
+    page2 = session_manager.list_sessions(limit=2, offset=2)
+    assert len(page2) == 2
+    
+    # IDs should not overlap
+    page1_ids = {s["id"] for s in page1}
+    page2_ids = {s["id"] for s in page2}
+    assert len(page1_ids & page2_ids) == 0
+
+
+# ============================================================================
+# V2 Schema: Exchange with search_results and evaluation_score
+# ============================================================================
+
+def test_save_exchange_with_search_results(session_manager):
+    """Test saving exchange with search_results."""
+    session_id = session_manager.create_session("Test")
+    
+    search_results = [
+        {
+            "title": "Python Tutorial",
+            "url": "https://example.com/python",
+            "snippet": "Learn Python",
+            "citation_id": 1
+        }
+    ]
+    
+    exchange_id = session_manager.save_exchange(
+        session_id, "Q", "A", "gpt-oss:20b", "ja", search_results=search_results
+    )
+    assert exchange_id is not None
+    
+    # Load and verify
+    loaded = session_manager.load_session(session_id)
+    assert loaded["exchanges"][0]["search_results"] == search_results
+
+
+def test_save_exchange_with_evaluation_score(session_manager):
+    """Test saving exchange with evaluation_score."""
+    session_id = session_manager.create_session("Test")
+    
+    eval_score = {
+        "accuracy": 0.9,
+        "freshness": 0.85,
+        "overall": 0.875
+    }
+    
+    exchange_id = session_manager.save_exchange(
+        session_id, "Q", "A", "gpt-oss:20b", "ja", evaluation_score=eval_score
+    )
+    assert exchange_id is not None
+    
+    # Load and verify
+    loaded = session_manager.load_session(session_id)
+    assert loaded["exchanges"][0]["evaluation_score"] == eval_score
+
+
+def test_save_exchange_without_optional_fields(session_manager):
+    """Test saving exchange without search_results or evaluation_score."""
+    session_id = session_manager.create_session("Test")
+    
+    exchange_id = session_manager.save_exchange(
+        session_id, "Q", "A", "gpt-oss:20b", "ja"
+    )
+    assert exchange_id is not None
+    
+    # Load and verify (should be None, not empty dict/list)
+    loaded = session_manager.load_session(session_id)
+    assert loaded["exchanges"][0]["search_results"] is None
+    assert loaded["exchanges"][0]["evaluation_score"] is None
+
+
+def test_save_exchange_updates_session_timestamp(session_manager):
+    """Test that saving exchange updates session updated_at."""
+    import time
+    
+    session_id = session_manager.create_session("Test")
+    loaded1 = session_manager.load_session(session_id)
+    timestamp1 = loaded1["updated_at"]
+    
+    time.sleep(0.1)
+    session_manager.save_exchange(session_id, "Q", "A", "gpt-oss:20b", "ja")
+    
+    loaded2 = session_manager.load_session(session_id)
+    timestamp2 = loaded2["updated_at"]
+    
+    assert timestamp2 > timestamp1
+
+
+# ============================================================================
+# Error Handling Tests
+# ============================================================================
+
+def test_error_handling_invalid_session_id(session_manager):
+    """Test error handling for non-existent session ID."""
+    # Load non-existent session
+    loaded = session_manager.load_session(99999)
+    assert loaded is None
+    
+    # Delete non-existent session (returns True in SQLite)
+    deleted = session_manager.delete_session(99999)
+    assert deleted is True
+
+
+def test_empty_session_list(session_manager):
+    """Test listing when no sessions exist."""
+    sessions = session_manager.list_sessions()
+    assert sessions == []
+
+
+def test_search_empty_result(session_manager):
+    """Test search with no matches."""
+    session_manager.create_session("Test")
+    
+    results = session_manager.search_sessions("nonexistent")
+    assert results == []
+
+
+def test_json_serialization_edge_cases(session_manager):
+    """Test JSON serialization of complex exchange data."""
+    session_id = session_manager.create_session("Test")
+    
+    # Exchange with special characters and nested content
+    session_manager.save_exchange(
+        session_id,
+        "Test with \"quotes\" and\nnewlines",
+        "Response with emojis: 🚀 🎉",
+        "gpt-oss:20b",
+        "ja"
+    )
+    
+    # Load and verify
+    loaded = session_manager.load_session(session_id)
+    assert loaded["exchanges"][0]["user_message"] == "Test with \"quotes\" and\nnewlines"
+    assert loaded["exchanges"][0]["assistant_message"] == "Response with emojis: 🚀 🎉"
+
+
+def test_load_session_with_malformed_tags_json(session_manager):
+    """Test loading session with malformed tags JSON."""
+    session_id = session_manager.create_session("Test")
+    
+    # Corrupt tags in database
+    with sqlite3.connect(session_manager.db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("UPDATE sessions SET tags = ? WHERE id = ?", ("invalid json", session_id))
+        conn.commit()
+    
+    # Should handle gracefully
+    loaded = session_manager.load_session(session_id)
+    assert loaded is not None
+    assert loaded["tags"] == []  # Fallback to empty list
+
+
+def test_load_session_with_malformed_search_results_json(session_manager):
+    """Test loading exchange with malformed search_results JSON."""
+    session_id = session_manager.create_session("Test")
+    
+    # Save exchange then corrupt search_results
+    exchange_id = session_manager.save_exchange(
+        session_id, "Q", "A", "gpt-oss:20b", "ja", search_results=[{"test": "data"}]
+    )
+    
+    with sqlite3.connect(session_manager.db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("UPDATE exchanges SET search_results = ? WHERE id = ?", ("invalid json", exchange_id))
+        conn.commit()
+    
+    # Should handle gracefully
+    loaded = session_manager.load_session(session_id)
+    assert loaded["exchanges"][0]["search_results"] is None  # Fallback to None
+
+
+# ============================================================================
+# Schema Version and Migration Tests
+# ============================================================================
+
+def test_session_manager_requires_v2_schema(temp_db_path):
+    """Test that SessionManager raises error for outdated schema."""
+    # Create V1 schema manually
+    with sqlite3.connect(temp_db_path) as conn:
+        conn.execute("""
+            CREATE TABLE schema_version (
+                version INTEGER PRIMARY KEY,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                description TEXT NOT NULL
+            )
+        """)
+        conn.execute("INSERT INTO schema_version (version, description) VALUES (1, 'V1')")
+        conn.execute("""
+            CREATE TABLE sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+    
+    # Attempting to initialize SessionManager should raise error
+    with pytest.raises(RuntimeError, match="outdated.*version 1"):
+        SessionManager(db_path=temp_db_path)
+
+
+def test_session_manager_requires_schema_version_table(temp_db_path):
+    """Test that SessionManager raises error if schema_version table missing."""
+    # Create database without schema_version table
+    with sqlite3.connect(temp_db_path) as conn:
+        conn.execute("CREATE TABLE sessions (id INTEGER PRIMARY KEY)")
+        conn.commit()
+    
+    # Should raise error
+    with pytest.raises(RuntimeError, match="Schema version table not found"):
+        SessionManager(db_path=temp_db_path)
+    
+    # Verify directory was created
+    assert db_path.parent.exists()
+    
+    # Verify database is usable
+    session_id = manager.create_session("Test", "gpt-oss:20b", "ja")
+    assert session_id is not None
+
+
+def test_error_handling_invalid_session_id(session_manager):
+    """Test error handling for non-existent session ID."""
+    # Load non-existent session
+    loaded = session_manager.load_session(99999)
+    assert loaded is None
+    
+    # Save to non-existent session (should fail gracefully)
+    saved = session_manager.save_session(99999, [], "gpt-oss:20b", "ja")
+    # Note: Save will succeed (UPDATE with no rows) but load should return None
+    
+    # Delete non-existent session
+    deleted = session_manager.delete_session(99999)
+    # This will return True (DELETE with no rows is still successful)
+
+
+def test_concurrent_save_updates_timestamp(session_manager):
+    """Test that repeated saves update the timestamp."""
+    session_id = session_manager.create_session("Test", "gpt-oss:20b", "ja")
+    
+    # First save
+    loaded1 = session_manager.load_session(session_id)
+    timestamp1 = loaded1["updated_at"]
+    
+    # Small delay and second save
+    import time
+    time.sleep(0.1)
+    session_manager.save_session(session_id, [], "gpt-oss:20b", "ja")
+    
+    # Verify timestamp updated
+    loaded2 = session_manager.load_session(session_id)
+    timestamp2 = loaded2["updated_at"]
+    
+    # Timestamps should be different or at least not strictly equal
+    # (SQLite CURRENT_TIMESTAMP has second precision)
+    assert timestamp2 >= timestamp1
+
+
+def test_json_serialization_edge_cases(session_manager):
+    """Test JSON serialization of complex history."""
+    session_id = session_manager.create_session("Complex", "gpt-oss:20b", "ja")
+    
+    # History with special characters and nested content
+    history = [
+        {
+            "role": "user",
+            "content": "Test with \"quotes\" and\nnewlines"
+        },
+        {
+            "role": "assistant",
+            "content": "Response with emojis: 🚀 🎉"
+        }
+    ]
+    
+    # Save and load
+    session_manager.save_session(session_id, history, "gpt-oss:20b", "ja")
+    loaded = session_manager.load_session(session_id)
+    
+    assert loaded["history"] == history
+
+
+def test_empty_session_list(session_manager):
+    """Test listing when no sessions exist."""
+    sessions = session_manager.list_sessions()
+    assert sessions == []
+
+
+def test_search_empty_result(session_manager):
+    """Test search with no matches."""
+    session_manager.create_session("Test", "gpt-oss:20b", "ja")
+    
+    results = session_manager.search_sessions("nonexistent")
+    assert results == []
+
+
+def test_save_and_load_evaluation_score(session_manager):
+    """Test saving and loading session with evaluation score."""
+    session_id = session_manager.create_session("Test", "gpt-oss:20b", "ja")
+    
+    # Sample evaluation score
+    eval_score = {
+        "accuracy_score": 0.85,
+        "freshness_score": 0.90,
+        "overall_score": 0.875,
+        "reasoning": "Good response with recent information"
+    }
+    
+    # Save with evaluation score
+    saved = session_manager.save_session(
+        session_id, [], "gpt-oss:20b", "ja", last_evaluation_score=eval_score
+    )
+    assert saved is True
+    
+    # Load and verify
+    loaded = session_manager.load_session(session_id)
+    assert loaded["last_evaluation_score"] == eval_score
+    assert loaded["last_evaluation_score"]["overall_score"] == 0.875
+
+
+def test_save_session_without_evaluation_score(session_manager):
+    """Test saving session without evaluation score (backward compatibility)."""
+    session_id = session_manager.create_session("Test", "gpt-oss:20b", "ja")
+    
+    # Save without evaluation score
+    saved = session_manager.save_session(session_id, [], "gpt-oss:20b", "ja")
+    assert saved is True
+    
+    # Load and verify (None is expected)
+    loaded = session_manager.load_session(session_id)
+    assert loaded["last_evaluation_score"] is None
+
+
+def test_save_and_load_evaluation_score_with_history(session_manager):
+    """Test saving and loading both history and evaluation score together."""
+    session_id = session_manager.create_session("Test", "gpt-oss:20b", "ja")
+    
+    history = [
+        {"role": "user", "content": "What is AI?"},
+        {"role": "assistant", "content": "AI is artificial intelligence..."}
+    ]
+    
+    eval_score = {
+        "accuracy_score": 0.92,
+        "freshness_score": 0.88,
+        "overall_score": 0.90
+    }
+    
+    # Save both history and evaluation score
+    saved = session_manager.save_session(
+        session_id, history, "gpt-oss:20b", "ja", last_evaluation_score=eval_score
+    )
+    assert saved is True
+    
+    # Load and verify both are preserved
+    loaded = session_manager.load_session(session_id)
+    assert loaded["history"] == history
+    assert loaded["last_evaluation_score"] == eval_score
+
+
+def test_rename_session_with_long_name(session_manager):
+    """Test renaming session with name longer than 50 characters."""
+    session_id = session_manager.create_session("Test", "gpt-oss:20b", "ja")
+    
+    # Create a long name (over 50 chars)
+    long_name = "Session " + "x" * 60
+    
+    # Rename (no truncation at rename_session level)
+    renamed = session_manager.rename_session(session_id, long_name)
+    assert renamed is True
+    
+    # Verify full name is stored
+    loaded = session_manager.load_session(session_id)
+    assert loaded["name"] == long_name
+    assert len(loaded["name"]) > 50
+
+
+def test_message_with_embedded_evaluation(session_manager):
+    """Test saving and loading session with embedded evaluation scores in messages."""
+    session_id = session_manager.create_session("Test", "gpt-oss:20b", "ja")
+    
+    # History with embedded evaluation in message
+    history = [
+        {"role": "user", "content": "What is Python?"},
+        {
+            "role": "assistant",
+            "content": "Python is a programming language...",
+            "evaluation": {
+                "accuracy_score": 0.88,
+                "freshness_score": 0.85,
+                "overall_score": 0.87,
+                "reasoning": "Accurate but could mention more recent features"
+            }
+        }
+    ]
+    
+    # Save with embedded evaluations
+    saved = session_manager.save_session(
+        session_id, history, "gpt-oss:20b", "ja"
+    )
+    assert saved is True
+    
+    # Load and verify embedded evaluation is preserved
+    loaded = session_manager.load_session(session_id)
+    assert len(loaded["history"]) == 2
+    assert "evaluation" in loaded["history"][1]
+    assert loaded["history"][1]["evaluation"]["accuracy_score"] == 0.88
+
+
+# ========================================
+# Group Management Tests
+# ========================================
+
+def test_create_group_success(session_manager):
+    """Test successful group creation."""
+    group_id = session_manager.create_group("Research Project")
+    
+    assert group_id is not None
+    assert isinstance(group_id, int)
+    
+    # Verify group exists
+    group = session_manager.get_group(group_id)
+    assert group is not None
+    assert group["title"] == "Research Project"
+    assert group["session_count"] == 0
+
+
+def test_list_groups_ordered_by_updated_at(session_manager):
+    """Test listing groups ordered by most recently updated."""
+    # Create three groups
+    group1_id = session_manager.create_group("Group 1")
+    group2_id = session_manager.create_group("Group 2")
+    group3_id = session_manager.create_group("Group 3")
+    
+    # Update group1 to make it more recent
+    import time
+    time.sleep(0.1)
+    session_manager.update_group_timestamp(group1_id)
+    
+    # List groups
+    groups = session_manager.list_groups()
+    
+    # Verify order: group1 should be first (most recently updated)
+    # Note: Default group (id=1) will also be present
+    assert any(g["id"] == group1_id for g in groups)
+    # Find group1's position
+    group1_pos = next(i for i, g in enumerate(groups) if g["id"] == group1_id)
+    # It should be near the top (0 or 1, since default group may be first if recently updated)
+    assert group1_pos <= 1
+
+
+def test_get_group_by_id(session_manager):
+    """Test retrieving group by ID."""
+    group_id = session_manager.create_group("Test Group")
+    
+    group = session_manager.get_group(group_id)
+    
+    assert group is not None
+    assert group["id"] == group_id
+    assert group["title"] == "Test Group"
+    assert "created_at" in group
+    assert "updated_at" in group
+
+
+def test_delete_group_with_session_move(session_manager):
+    """Test deleting group and moving sessions to default group."""
+    # Create group and session
+    group_id = session_manager.create_group("To Delete")
+    session_id = session_manager.create_session("Test Session", "gpt-oss:20b", "ja", group_id=group_id)
+    
+    # Verify session is in the group
+    session = session_manager.load_session(session_id)
+    assert session["group_id"] == group_id
+    
+    # Delete group (move_to_default=True)
+    deleted = session_manager.delete_group(group_id, move_to_default=True)
+    assert deleted is True
+    
+    # Verify group is deleted
+    group = session_manager.get_group(group_id)
+    assert group is None
+    
+    # Verify session moved to default group (id=1)
+    session = session_manager.load_session(session_id)
+    assert session["group_id"] == 1
+
+
+def test_delete_group_with_session_deletion(session_manager):
+    """Test deleting group and all its sessions."""
+    # Create group and session
+    group_id = session_manager.create_group("To Delete")
+    session_id = session_manager.create_session("Test Session", "gpt-oss:20b", "ja", group_id=group_id)
+    
+    # Delete group (move_to_default=False)
+    deleted = session_manager.delete_group(group_id, move_to_default=False)
+    assert deleted is True
+    
+    # Verify group is deleted
+    group = session_manager.get_group(group_id)
+    assert group is None
+    
+    # Verify session is also deleted
+    session = session_manager.load_session(session_id)
+    assert session is None
+
+
+def test_delete_default_group_fails(session_manager):
+    """Test that deleting default group (id=1) is prevented."""
+    # Attempt to delete default group
+    deleted = session_manager.delete_group(1)
+    
+    # Should fail or return False
+    assert deleted is False or deleted is None
+    
+    # Verify default group still exists
+    default_group = session_manager.get_group(1)
+    assert default_group is not None
+
+
+def test_rename_group(session_manager):
+    """Test renaming a group."""
+    group_id = session_manager.create_group("Old Title")
+    
+    # Rename group
+    renamed = session_manager.rename_group(group_id, "New Title")
+    assert renamed is True
+    
+    # Verify new title
+    group = session_manager.get_group(group_id)
+    assert group["title"] == "New Title"
+
+
+def test_update_group_timestamp(session_manager):
+    """Test updating group timestamp."""
+    group_id = session_manager.create_group("Test Group")
+    
+    # Get initial timestamp
+    group1 = session_manager.get_group(group_id)
+    timestamp1 = group1["updated_at"]
+    
+    # Wait and update
+    import time
+    time.sleep(0.1)
+    session_manager.update_group_timestamp(group_id)
+    
+    # Verify timestamp updated
+    group2 = session_manager.get_group(group_id)
+    timestamp2 = group2["updated_at"]
+    
+    assert timestamp2 >= timestamp1
+
+
+def test_create_session_with_group_id(session_manager):
+    """Test creating session with specific group_id."""
+    group_id = session_manager.create_group("Project Alpha")
+    session_id = session_manager.create_session("Session 1", "gpt-oss:20b", "ja", group_id=group_id)
+    
+    # Verify session has correct group_id
+    session = session_manager.load_session(session_id)
+    assert session["group_id"] == group_id
+
+
+def test_list_sessions_filtered_by_group(session_manager):
+    """Test listing sessions filtered by group_id."""
+    # Create two groups and sessions
+    group1_id = session_manager.create_group("Group 1")
+    group2_id = session_manager.create_group("Group 2")
+    
+    session1_id = session_manager.create_session("Session 1", "gpt-oss:20b", "ja", group_id=group1_id)
+    session2_id = session_manager.create_session("Session 2", "gpt-oss:20b", "ja", group_id=group2_id)
+    session3_id = session_manager.create_session("Session 3", "gpt-oss:20b", "ja", group_id=group1_id)
+    
+    # List sessions for group1
+    sessions = session_manager.list_sessions(group_id=group1_id)
+    
+    # Should only have 2 sessions from group1
+    assert len(sessions) == 2
+    assert all(s["id"] in [session1_id, session3_id] for s in sessions)
+
+
+def test_session_update_triggers_group_timestamp_update(session_manager):
+    """Test that updating session updates its group timestamp."""
+    group_id = session_manager.create_group("Test Group")
+    session_id = session_manager.create_session("Test Session", "gpt-oss:20b", "ja", group_id=group_id)
+    
+    # Get initial group timestamp
+    group1 = session_manager.get_group(group_id)
+    timestamp1 = group1["updated_at"]
+    
+    # Wait and update session
+    import time
+    time.sleep(0.1)
+    session_manager.save_session(session_id, [{"role": "user", "content": "test"}], "gpt-oss:20b", "ja")
+    
+    # Verify group timestamp updated
+    group2 = session_manager.get_group(group_id)
+    timestamp2 = group2["updated_at"]
+    
+    assert timestamp2 >= timestamp1
+
+
+def test_default_group_created_on_init(temp_db_path):
+    """Test that default group is created on SessionManager initialization."""
+    manager = SessionManager(db_path=temp_db_path)
+    
+    # Verify default group exists
+    default_group = manager.get_group(1)
+    assert default_group is not None
+    assert default_group["id"] == 1
+
+
+def test_sessions_without_group_id_assigned_to_default(session_manager):
+    """Test that sessions created without group_id are assigned to default group."""
+    # Create session without specifying group_id
+    session_id = session_manager.create_session("Test Session", "gpt-oss:20b", "ja")
+    
+    # Verify it's in default group (id=1)
+    session = session_manager.load_session(session_id)
+    assert session["group_id"] == 1
+
+
+# ========================================
+# search_results Persistence Tests
+# ========================================
+
+def test_save_and_load_search_results(session_manager):
+    """Test saving and loading search_results."""
+    session_id = session_manager.create_session("Test", "gpt-oss:20b", "ja")
+    
+    search_results = [
+        {
+            "title": "Python Tutorial",
+            "url": "https://example.com/python",
+            "snippet": "Learn Python programming",
+            "date": "2024-01-15",
+            "citation_id": 1,
+            "relevance_score": 0.9,
+            "credibility_score": 0.85
+        },
+        {
+            "title": "Advanced Python",
+            "url": "https://example.com/advanced",
+            "snippet": "Advanced topics",
+            "date": "2024-02-20",
+            "citation_id": 2,
+            "relevance_score": 0.8,
+            "credibility_score": 0.9
+        }
+    ]
+    
+    # Save with search_results
+    saved = session_manager.save_session(
+        session_id, [], "gpt-oss:20b", "ja", search_results=search_results
+    )
+    assert saved is True
+    
+    # Load and verify
+    loaded = session_manager.load_session(session_id)
+    assert loaded["search_results"] == search_results
+    assert len(loaded["search_results"]) == 2
+    assert loaded["search_results"][0]["relevance_score"] == 0.9
+
+
+def test_save_session_without_search_results_preserves_existing(session_manager):
+    """Test that saving without search_results parameter preserves existing search_results."""
+    session_id = session_manager.create_session("Test", "gpt-oss:20b", "ja")
+    
+    initial_search_results = [
+        {"title": "Initial Result", "url": "https://example.com", "snippet": "Test"}
+    ]
+    
+    # First save with search_results
+    session_manager.save_session(
+        session_id, [], "gpt-oss:20b", "ja", search_results=initial_search_results
+    )
+    
+    # Second save without search_results parameter
+    session_manager.save_session(
+        session_id, [{"role": "user", "content": "New message"}], "gpt-oss:20b", "ja"
+    )
+    
+    # Verify search_results are preserved
+    loaded = session_manager.load_session(session_id)
+    assert loaded["search_results"] == initial_search_results
+
+
+def test_save_empty_search_results(session_manager):
+    """Test saving empty search_results list."""
+    session_id = session_manager.create_session("Test", "gpt-oss:20b", "ja")
+    
+    # Save with empty list
+    saved = session_manager.save_session(
+        session_id, [], "gpt-oss:20b", "ja", search_results=[]
+    )
+    assert saved is True
+    
+    # Load and verify
+    loaded = session_manager.load_session(session_id)
+    assert loaded["search_results"] == []
+
+
+def test_search_results_with_complex_structure(session_manager):
+    """Test saving search_results with all possible fields."""
+    session_id = session_manager.create_session("Test", "gpt-oss:20b", "ja")
+    
+    complex_results = [
+        {
+            "title": "Full Result",
+            "url": "https://example.com/full",
+            "snippet": "Complete example with all fields",
+            "date": "2024-03-10T10:30:00",
+            "citation_id": 5,
+            "relevance_score": 0.95,
+            "credibility_score": 0.88,
+            "extra_field": "Should be preserved"
+        }
+    ]
+    
+    # Save complex structure
+    session_manager.save_session(
+        session_id, [], "gpt-oss:20b", "ja", search_results=complex_results
+    )
+    
+    # Load and verify all fields preserved
+    loaded = session_manager.load_session(session_id)
+    assert loaded["search_results"][0]["title"] == "Full Result"
+    assert loaded["search_results"][0]["citation_id"] == 5
+    assert loaded["search_results"][0]["extra_field"] == "Should be preserved"
+
+
+def test_load_session_with_missing_search_results_column(temp_db_path):
+    """Test loading session from database without search_results column (backward compatibility)."""
+    # Create database without search_results column
+    conn = sqlite3.connect(temp_db_path)
+    cursor = conn.cursor()
+    
+    # Create old schema (without search_results and group_id)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            model TEXT NOT NULL,
+            language TEXT DEFAULT 'ja',
+            history TEXT DEFAULT '[]',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_evaluation_score TEXT
+        )
+    """)
+    
+    # Insert test session
+    cursor.execute("""
+        INSERT INTO sessions (name, model, language, history)
+        VALUES (?, ?, ?, ?)
+    """, ("Test Session", "gpt-oss:20b", "ja", json.dumps([{"role": "user", "content": "test"}])))
+    
+    session_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    # Create SessionManager (should trigger migration)
+    manager = SessionManager(db_path=temp_db_path)
+    
+    # Load session
+    loaded = manager.load_session(session_id)
+    
+    # Should return empty list as default
+    assert loaded is not None
+    assert loaded["search_results"] == []
+
+
+# ========================================
+# Database Migration Tests
+# ========================================
+
+def test_migration_adds_group_id_column(temp_db_path):
+    """Test migration adds group_id column to existing database."""
+    # Create old schema without group_id
+    conn = sqlite3.connect(temp_db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            model TEXT NOT NULL,
+            language TEXT DEFAULT 'ja',
+            history TEXT DEFAULT '[]',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+    
+    # Initialize SessionManager (triggers migration)
+    manager = SessionManager(db_path=temp_db_path)
+    
+    # Verify group_id column exists
+    conn = sqlite3.connect(temp_db_path)
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(sessions)")
+    columns = [col[1] for col in cursor.fetchall()]
+    conn.close()
+    
+    assert "group_id" in columns
+
+
+def test_migration_adds_search_results_column(temp_db_path):
+    """Test migration adds search_results column to existing database."""
+    # Create old schema without search_results
+    conn = sqlite3.connect(temp_db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            model TEXT NOT NULL,
+            language TEXT DEFAULT 'ja',
+            history TEXT DEFAULT '[]',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+    
+    # Initialize SessionManager (triggers migration)
+    manager = SessionManager(db_path=temp_db_path)
+    
+    # Verify search_results column exists
+    conn = sqlite3.connect(temp_db_path)
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(sessions)")
+    columns = [col[1] for col in cursor.fetchall()]
+    conn.close()
+    
+    assert "search_results" in columns
+
+
+def test_migration_creates_default_group(temp_db_path):
+    """Test migration creates default group."""
+    # Create old schema
+    conn = sqlite3.connect(temp_db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            model TEXT NOT NULL,
+            language TEXT DEFAULT 'ja',
+            history TEXT DEFAULT '[]',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+    
+    # Initialize SessionManager (triggers migration)
+    manager = SessionManager(db_path=temp_db_path)
+    
+    # Verify default group exists
+    default_group = manager.get_group(1)
+    assert default_group is not None
+    assert default_group["id"] == 1
+
+
+def test_migration_assigns_null_group_id_to_default(temp_db_path):
+    """Test migration assigns existing sessions with NULL group_id to default group."""
+    # Create old schema and insert session without group_id
+    conn = sqlite3.connect(temp_db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            model TEXT NOT NULL,
+            language TEXT DEFAULT 'ja',
+            history TEXT DEFAULT '[]',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("""
+        INSERT INTO sessions (name, model, language, history)
+        VALUES (?, ?, ?, ?)
+    """, ("Old Session", "gpt-oss:20b", "ja", "[]"))
+    session_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    # Initialize SessionManager (triggers migration)
+    manager = SessionManager(db_path=temp_db_path)
+    
+    # Verify session has group_id = 1
+    session = manager.load_session(session_id)
+    assert session["group_id"] == 1
+
+
+def test_migration_idempotent(temp_db_path):
+    """Test that running migration multiple times is safe (idempotent)."""
+    # First initialization
+    manager1 = SessionManager(db_path=temp_db_path)
+    group_id = manager1.create_group("Test Group")
+    session_id = manager1.create_session("Test Session", "gpt-oss:20b", "ja", group_id=group_id)
+    
+    # Second initialization (re-run migration)
+    manager2 = SessionManager(db_path=temp_db_path)
+    
+    # Verify data is preserved
+    group = manager2.get_group(group_id)
+    session = manager2.load_session(session_id)
+    
+    assert group is not None
+    assert group["title"] == "Test Group"
+    assert session is not None
+    assert session["name"] == "Test Session"
+    assert session["group_id"] == group_id
+
+
+def test_list_sessions_with_group_id_filter_returns_correct_sessions(session_manager):
+    """group_idフィルタが正しく動作することを確認"""
+    group1_id = session_manager.create_group("Group 1")
+    group2_id = session_manager.create_group("Group 2")
+    
+    session1_id = session_manager.create_session("Session 1", "gpt-oss:20b", "ja", group_id=group1_id)
+    session2_id = session_manager.create_session("Session 2", "gpt-oss:20b", "ja", group_id=group2_id)
+    session3_id = session_manager.create_session("Session 3", "gpt-oss:20b", "ja", group_id=group1_id)
+    
+    # Group 1のセッションのみ取得
+    sessions = session_manager.list_sessions(group_id=group1_id)
+    
+    assert len(sessions) == 2
+    assert all(s["group_id"] == group1_id for s in sessions)
+    assert set(s["id"] for s in sessions) == {session1_id, session3_id}
+
+
+def test_load_session_with_search_results_preserves_structure(session_manager):
+    """search_resultsの構造が保持されることを確認"""
+    session_id = session_manager.create_session("Test", "gpt-oss:20b", "ja")
+    
+    complex_search_results = [
+        {
+            "title": "Result 1",
+            "url": "https://example.com/1",
+            "snippet": "Snippet 1",
+            "date": "2024-01-15",
+            "citation_id": 1,
+            "relevance_score": 0.9,
+            "credibility_score": 0.85,
+            "extra_metadata": {"source": "web", "language": "ja"}
+        }
+    ]
+    
+    session_manager.save_session(
+        session_id, [], "gpt-oss:20b", "ja", search_results=complex_search_results
+    )
+    
+    loaded = session_manager.load_session(session_id)
+    
+    assert loaded["search_results"] == complex_search_results
+    assert loaded["search_results"][0]["extra_metadata"]["source"] == "web"
+
+
+# ============================================================================
+# Tags機能テスト
+# ============================================================================
+
+def test_tags_column_migration(temp_db_path):
+    """tags列が正しく追加されることを確認"""
+    # SessionManagerの初期化でマイグレーションが実行される
+    manager = SessionManager(db_path=temp_db_path)
+    
+    # データベースに直接接続してカラムを確認
+    with sqlite3.connect(temp_db_path) as conn:
+        cursor = conn.execute("PRAGMA table_info(sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        assert "tags" in columns, "tags column should exist after migration"
+
+
+def test_save_session_with_auto_tag(session_manager):
+    """auto_tag=Trueでタグが自動生成・保存されることを確認"""
+    from unittest.mock import MagicMock
+    
+    # モックAgentを作成
+    mock_agent = MagicMock()
+    mock_agent.generate_tags.return_value = ["AI", "検索", "技術"]
+    
+    session_id = session_manager.create_session("Test", "gpt-oss:20b", "ja")
+    
+    history = [
+        {"role": "user", "content": "AIについて教えて"},
+        {"role": "assistant", "content": "AIは人工知能のことです"}
+    ]
+    
+    # auto_tag=Trueでセッション保存
+    result = session_manager.save_session(
+        session_id, history, "gpt-oss:20b", "ja",
+        auto_tag=True, agent=mock_agent
+    )
+    
+    assert result is True
+    mock_agent.generate_tags.assert_called_once_with(history)
+    
+    # ロードして確認
+    loaded = session_manager.load_session(session_id)
+    assert loaded["tags"] == ["AI", "検索", "技術"]
+
+
+def test_load_session_with_tags(session_manager):
+    """タグが正しくロード・パースされることを確認"""
+    session_id = session_manager.create_session("Test", "gpt-oss:20b", "ja")
+    
+    # 直接データベースにタグを保存
+    with sqlite3.connect(session_manager.db_path) as conn:
+        conn.execute(
+            "UPDATE sessions SET tags = ? WHERE id = ?",
+            (json.dumps(["Python", "AI", "機械学習"]), session_id)
+        )
+        conn.commit()
+    
+    # ロードして確認
+    loaded = session_manager.load_session(session_id)
+    assert loaded["tags"] == ["Python", "AI", "機械学習"]
+
+
+def test_load_session_with_null_tags(session_manager):
+    """tags列がNULLの場合、空リストとして扱われることを確認"""
+    session_id = session_manager.create_session("Test", "gpt-oss:20b", "ja")
+    
+    # tagsはデフォルトでNULL
+    loaded = session_manager.load_session(session_id)
+    assert loaded["tags"] == []
+
+
+def test_list_sessions_with_date_filter(session_manager):
+    """date_from/date_toフィルタが正しく動作することを確認"""
+    import time
+    
+    # 異なる日付のセッションを作成（created_atは実際にはCURRENT_TIMESTAMPなので、手動で設定）
+    session1_id = session_manager.create_session("Session 1", "gpt-oss:20b", "ja")
+    
+    # 日付を変更（直接データベース操作）
+    with sqlite3.connect(session_manager.db_path) as conn:
+        conn.execute(
+            "UPDATE sessions SET created_at = ? WHERE id = ?",
+            ("2025-01-15 10:00:00", session1_id)
+        )
+        conn.commit()
+    
+    session2_id = session_manager.create_session("Session 2", "gpt-oss:20b", "ja")
+    with sqlite3.connect(session_manager.db_path) as conn:
+        conn.execute(
+            "UPDATE sessions SET created_at = ? WHERE id = ?",
+            ("2025-02-20 15:00:00", session2_id)
+        )
+        conn.commit()
+    
+    # 日付範囲でフィルタ
+    sessions = session_manager.list_sessions(date_from="2025-02-01", date_to="2025-02-28")
+    
+    assert len(sessions) == 1
+    assert sessions[0]["id"] == session2_id
+
+
+def test_list_sessions_with_tag_filter(session_manager):
+    """tagsフィルタが正しく動作することを確認（複数タグのANDロジック）"""
+    session1_id = session_manager.create_session("Session 1", "gpt-oss:20b", "ja")
+    session2_id = session_manager.create_session("Session 2", "gpt-oss:20b", "ja")
+    session3_id = session_manager.create_session("Session 3", "gpt-oss:20b", "ja")
+    
+    # タグを直接設定
+    with sqlite3.connect(session_manager.db_path) as conn:
+        conn.execute("UPDATE sessions SET tags = ? WHERE id = ?", 
+                    (json.dumps(["AI", "Python"]), session1_id))
+        conn.execute("UPDATE sessions SET tags = ? WHERE id = ?", 
+                    (json.dumps(["AI", "機械学習"]), session2_id))
+        conn.execute("UPDATE sessions SET tags = ? WHERE id = ?", 
+                    (json.dumps(["Python", "機械学習"]), session3_id))
+        conn.commit()
+    
+    # 単一タグでフィルタ
+    sessions = session_manager.list_sessions(tags=["AI"])
+    assert len(sessions) == 2
+    assert set(s["id"] for s in sessions) == {session1_id, session2_id}
+    
+    # 複数タグでフィルタ（ANDロジック）
+    sessions = session_manager.list_sessions(tags=["AI", "Python"])
+    assert len(sessions) == 1
+    assert sessions[0]["id"] == session1_id
+
+
+def test_search_sessions_with_tags(session_manager):
+    """タグ検索が正しく動作することを確認"""
+    session1_id = session_manager.create_session("Session 1", "gpt-oss:20b", "ja")
+    session2_id = session_manager.create_session("Session 2", "gpt-oss:20b", "ja")
+    
+    # タグを設定
+    with sqlite3.connect(session_manager.db_path) as conn:
+        conn.execute("UPDATE sessions SET tags = ? WHERE id = ?", 
+                    (json.dumps(["Python", "AI"]), session1_id))
+        conn.execute("UPDATE sessions SET tags = ? WHERE id = ?", 
+                    (json.dumps(["Java", "Backend"]), session2_id))
+        conn.commit()
+    
+    # タグで検索
+    results = session_manager.search_sessions("Python")
+    
+    assert len(results) == 1
+    assert results[0]["id"] == session1_id
+    assert "Python" in json.loads(results[0]["tags"])
+
+
+# ============================================================================
+# スキーマバージョン管理テスト
+# ============================================================================
+
+def test_schema_version_table_creation(temp_db_path):
+    """schema_versionテーブルが正しく作成されるか"""
+    # マイグレーションスクリプトを直接実行
+    import sys
+    from pathlib import Path
+    
+    # プロジェクトルートのmigrate_db.pyをインポート
+    project_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(project_root))
+    
+    from migrate_db import ensure_schema_version_table
+    
+    # schema_versionテーブルを作成
+    with sqlite3.connect(temp_db_path) as conn:
+        ensure_schema_version_table(conn)
+        
+        # テーブルが存在するか確認
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'"
+        )
+        assert cursor.fetchone() is not None
+        
+        # カラムを確認
+        cursor = conn.execute("PRAGMA table_info(schema_version)")
+        columns = {row[1] for row in cursor.fetchall()}
+        assert columns == {"version", "applied_at", "description"}
+
+
+def test_initial_schema_version(temp_db_path):
+    """新規データベースがバージョン1として初期化されるか"""
+    import sys
+    from pathlib import Path
+    
+    project_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(project_root))
+    
+    from migrate_db import run_migrations, get_current_schema_version
+    
+    # マイグレーション実行
+    success = run_migrations(temp_db_path)
+    assert success is True
+    
+    # バージョンを確認
+    with sqlite3.connect(temp_db_path) as conn:
+        version = get_current_schema_version(conn)
+        assert version == 1
+
+
+def test_migration_idempotency(temp_db_path):
+    """同じマイグレーションを複数回実行しても安全か"""
+    import sys
+    from pathlib import Path
+    
+    project_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(project_root))
+    
+    from migrate_db import run_migrations, get_current_schema_version
+    
+    # 1回目のマイグレーション
+    success1 = run_migrations(temp_db_path)
+    assert success1 is True
+    
+    # データを追加
+    manager = SessionManager(db_path=temp_db_path)
+    session_id = manager.create_session("Test Session", "gpt-oss:20b", "ja")
+    
+    # 2回目のマイグレーション
+    success2 = run_migrations(temp_db_path)
+    assert success2 is True
+    
+    # データが保持されているか確認
+    loaded = manager.load_session(session_id)
+    assert loaded is not None
+    assert loaded["name"] == "Test Session"
+    
+    # バージョンが変わっていないか確認
+    with sqlite3.connect(temp_db_path) as conn:
+        version = get_current_schema_version(conn)
+        assert version == 1
+
+
+def test_schema_version_tracking(temp_db_path):
+    """マイグレーション実行後にバージョンが正しく記録されるか"""
+    import sys
+    from pathlib import Path
+    
+    project_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(project_root))
+    
+    from migrate_db import run_migrations
+    
+    # マイグレーション実行
+    run_migrations(temp_db_path)
+    
+    # schema_versionテーブルを確認
+    with sqlite3.connect(temp_db_path) as conn:
+        cursor = conn.execute(
+            "SELECT version, description FROM schema_version ORDER BY version"
+        )
+        rows = cursor.fetchall()
+        
+        # バージョン1が記録されているか
+        assert len(rows) >= 1
+        assert rows[0][0] == 1
+        assert "Initial schema" in rows[0][1]
+
+
+def test_backup_creation(temp_db_path):
+    """バックアップが正しく作成されるか"""
+    import sys
+    from pathlib import Path
+    
+    project_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(project_root))
+    
+    from migrate_db import create_backup
+    
+    # 既存のデータベースを作成
+    manager = SessionManager(db_path=temp_db_path)
+    manager.create_session("Test", "gpt-oss:20b", "ja")
+    
+    # バックアップ作成
+    backup_path = create_backup(temp_db_path, 0)
+    
+    assert backup_path is not None
+    assert backup_path.exists()
+    assert "backup_v0" in backup_path.name
+    
+    # バックアップが実際のコピーであることを確認
+    original_size = temp_db_path.stat().st_size
+    backup_size = backup_path.stat().st_size
+    assert original_size == backup_size
+
+
+def test_migration_rollback_on_error(temp_db_path):
+    """マイグレーション中のエラー時にロールバックされるか"""
+    import sys
+    from pathlib import Path
+    
+    project_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(project_root))
+    
+    from migrate_db import ensure_schema_version_table, set_schema_version
+    
+    # 部分的な初期化
+    with sqlite3.connect(temp_db_path) as conn:
+        ensure_schema_version_table(conn)
+        
+        # 不正なバージョンを記録しようとする（説明なし）
+        try:
+            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (99,))
+            conn.commit()
+            assert False, "Should have raised an error"
+        except sqlite3.IntegrityError:
+            # descriptionカラムがNOT NULLなのでエラーが発生するはず
+            pass
+
+
+def test_verify_schema_v1(temp_db_path):
+    """バージョン1のスキーマ検証が正しく動作するか"""
+    import sys
+    from pathlib import Path
+    
+    project_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(project_root))
+    
+    from migrate_db import run_migrations, verify_schema_v1
+    
+    # マイグレーション実行
+    run_migrations(temp_db_path)
+    
+    # 検証
+    with sqlite3.connect(temp_db_path) as conn:
+        result = verify_schema_v1(conn)
+        assert result is True
+
+
+def test_session_manager_warns_on_outdated_schema(temp_db_path, caplog):
+    """SessionManagerが古いスキーマで警告を出すか"""
+    import logging
+    
+    # 基本的なsessionsテーブルのみ作成（schema_versionなし）
+    with sqlite3.connect(temp_db_path) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                history TEXT NOT NULL,
+                model TEXT NOT NULL,
+                language TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+    
+    # SessionManagerを初期化
+    with caplog.at_level(logging.WARNING):
+        manager = SessionManager(db_path=temp_db_path)
+    
+    # 警告メッセージが出力されているか確認
+    assert any("Schema version table not found" in record.message for record in caplog.records)
+
+
+def test_migration_preserves_existing_data(temp_db_path):
+    """マイグレーションが既存データを保持するか"""
+    import sys
+    from pathlib import Path
+    
+    project_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(project_root))
+    
+    from migrate_db import run_migrations
+    
+    # 古いスキーマでデータを作成
+    with sqlite3.connect(temp_db_path) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                history TEXT NOT NULL,
+                model TEXT NOT NULL,
+                language TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute(
+            "INSERT INTO sessions (name, history, model, language) VALUES (?, ?, ?, ?)",
+            ("Old Session", "[]", "gpt-oss:20b", "ja")
+        )
+        conn.commit()
+        session_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    
+    # マイグレーション実行
+    success = run_migrations(temp_db_path)
+    assert success is True
+    
+    # データが保持されているか確認
+    manager = SessionManager(db_path=temp_db_path)
+    loaded = manager.load_session(session_id)
+    assert loaded is not None
+    assert loaded["name"] == "Old Session"
+    assert loaded["group_id"] == 1  # デフォルトグループに割り当てられている
+

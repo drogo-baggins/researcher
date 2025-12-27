@@ -3,14 +3,18 @@ import json
 import os
 import sys
 import re
+from pathlib import Path
+from typing import Any, Dict
 from researcher.agent import QueryAgent
 from researcher.chat_manager import ChatManager
 from researcher.citation_manager import CitationManager
+from researcher.session_manager import SessionManager
 from researcher.config import (
     ensure_ollama_running,
     ensure_searxng_running,
     get_auto_search_default,
     get_embedding_model,
+    get_evaluation_model,
     get_mcp_servers_config,
     get_relevance_threshold,
     get_searxng_url,
@@ -36,6 +40,81 @@ def detect_language_from_text(text: str) -> str:
     if text and (cjk_count / len(text) > 0.1):
         return "ja"
     return "en"
+
+
+def display_search_results_table(search_results: list, language: str = "ja") -> None:
+    """
+    Display search results in a formatted table.
+    
+    Args:
+        search_results: List of search result dicts with title, url, snippet, date, relevance_score, credibility_score
+        language: Language for headers ('ja' or 'en')
+    """
+    if not search_results:
+        return
+    
+    # Try to use tabulate if available, otherwise manual formatting
+    try:
+        from tabulate import tabulate
+        use_tabulate = True
+    except ImportError:
+        use_tabulate = False
+    
+    # Prepare headers
+    if language == "ja":
+        headers = ["#", "タイトル", "URL", "スニペット", "日付", "関連性", "信頼性"]
+    else:
+        headers = ["#", "Title", "URL", "Snippet", "Date", "Relevance", "Credibility"]
+    
+    # Prepare table data
+    table_data = []
+    for idx, result in enumerate(search_results, 1):
+        title = result.get("title", "N/A")
+        title_display = title[:50] + "..." if len(title) > 50 else title
+        
+        url = result.get("url", "")
+        url_display = url[:40] + "..." if len(url) > 40 else url
+        
+        snippet = result.get("snippet", "")
+        snippet_display = snippet[:100] + "..." if len(snippet) > 100 else snippet
+        
+        date = result.get("date", "N/A")
+        if date and date != "N/A":
+            # Format date to YYYY-MM-DD if ISO format
+            try:
+                date_display = date.split("T")[0]
+            except:
+                date_display = str(date)[:10]
+        else:
+            date_display = "N/A"
+        
+        relevance = result.get("relevance_score", 0.0)
+        credibility = result.get("credibility_score", 0.0)
+        
+        table_data.append([
+            idx,
+            title_display,
+            url_display,
+            snippet_display,
+            date_display,
+            f"{relevance:.2f}",
+            f"{credibility:.2f}"
+        ])
+    
+    # Display table
+    if use_tabulate:
+        print(tabulate(table_data, headers=headers, tablefmt="grid"))
+    else:
+        # Manual formatting
+        col_widths = [3, 50, 40, 100, 10, 8, 8]
+        header_line = " | ".join(h.ljust(w) for h, w in zip(headers, col_widths))
+        separator = "-+-".join("-" * w for w in col_widths)
+        
+        print(header_line)
+        print(separator)
+        for row in table_data:
+            row_line = " | ".join(str(cell).ljust(w) for cell, w in zip(row, col_widths))
+            print(row_line)
 
 
 def main():
@@ -93,6 +172,12 @@ def main():
         "--enable-self-eval",
         action="store_true",
         help="LLM自己評価と自動再検索を有効化（品質向上ループ）",
+    )
+    parser.add_argument(
+        "--evaluation-model",
+        type=str,
+        default=None,
+        help="評価専用のOllamaモデル名（例: llama3.2:3b）。未指定時は回答生成と同じモデルを使用",
     )
     args = parser.parse_args()
 
@@ -211,8 +296,38 @@ def main():
         web_crawler=web_crawler,
         language=agent_language,
         enable_self_evaluation=args.enable_self_eval,
+        evaluation_model=get_evaluation_model(args.evaluation_model),
     )
     chat.add_system_message("You are a helpful assistant.")
+    
+    # Initialize SessionManager for persisting evaluation scores
+    session_manager = SessionManager()
+    current_session_id = None
+    
+    # Try to load the most recent session on startup
+    sessions = session_manager.list_sessions()
+    if sessions:
+        # Load the most recent session
+        most_recent = sessions[0]
+        session_data = session_manager.load_session(most_recent["id"])
+        if session_data:
+            current_session_id = most_recent["id"]
+            chat.messages = session_data["history"]
+            # Restore evaluation score if available
+            if "last_evaluation_score" in session_data and session_data["last_evaluation_score"]:
+                chat.last_evaluation_score = session_data["last_evaluation_score"]
+            print(f"[セッション復元] ID: {current_session_id}, メッセージ数: {len(session_data['history'])}")
+    
+    # Create a new session if none exist or for tracking new interaction
+    if current_session_id is None:
+        try:
+            from datetime import datetime
+            session_name = f"CLI Session {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        except:
+            session_name = "CLI Session"
+        current_session_id = session_manager.create_session(session_name)
+        if current_session_id:
+            print(f"[新規セッション作成] ID: {current_session_id}")
 
     print("researcher CLI (Ollama)")
     print("/exit で終了, /clear で履歴クリア, /history で履歴表示, /search <query> でSearXNG検索")
@@ -281,11 +396,30 @@ def main():
                     if not query:
                         print("使用法: /search <query>")
                         continue
+                    
+                    def search_progress_callback(event: str, data: Dict[str, Any]) -> None:
+                        """検索リトライの進行状況を表示"""
+                        if event == "retry_start":
+                            print(f"[検索失敗] 試行 {data['retry_count']}/{data['max_retries']}: {data.get('error', '')[:100]}")
+                        elif event == "query_generated":
+                            print(f"[代替クエリ生成] 試行 {data['retry_count']}: {data['new_query']}")
+                        elif event == "retry_attempt":
+                            print(f"[再試行中] 試行 {data['retry_count']}: {data['query'][:100]}")
+                        elif event == "all_retries_failed":
+                            print(f"[検索失敗] すべてのリトライが失敗しました（最大{data['max_retries']}回）")
+                    
                     try:
-                        search_result = chat.search(query)
+                        search_result = chat.search(query, progress_callback=search_progress_callback)
                         print(search_result["formatted"])
+                        
+                        # Display detailed search results table
+                        all_search_results = search_result.get("all_search_results", [])
+                        if all_search_results:
+                            print("\n[検索結果詳細]")
+                            display_search_results_table(all_search_results, language=agent_language)
                     except RuntimeError as exc:
                         print(f"[ERROR] 検索に失敗しました: {exc}")
+                        print("[ヒント] SearXNGサーバーの状態を確認してください: /status")
                     continue
                 elif user_input.startswith("/blacklist"):
                     if not web_crawler:
@@ -464,12 +598,31 @@ def main():
                         print(f"[ERROR] MCPツール実行失敗: {exc}")
                     continue
                 if auto_search_enabled:
+                    def search_progress_callback(event: str, data: Dict[str, Any]) -> None:
+                        """検索リトライの進行状況を表示"""
+                        if event == "retry_start":
+                            print(f"[検索失敗] 試行 {data['retry_count']}/{data['max_retries']}: {data.get('error', '')[:100]}")
+                        elif event == "query_generated":
+                            print(f"[代替クエリ生成] 試行 {data['retry_count']}: {data['new_query']}")
+                        elif event == "retry_attempt":
+                            print(f"[再試行中] 試行 {data['retry_count']}: {data['query'][:100]}")
+                        elif event == "all_retries_failed":
+                            print(f"[検索失敗] すべてのリトライが失敗しました（最大{data['max_retries']}回）")
+                    
                     try:
-                        auto_result = chat.auto_search(user_input)
+                        auto_result = chat.auto_search(user_input, progress_callback=search_progress_callback)
+                        chat.pending_search_results = auto_result.get("all_search_results", [])
                         if auto_result.get("searched"):
                             print(auto_result["formatted"])
+                            
+                            # Display detailed search results table
+                            all_search_results = auto_result.get("all_search_results", [])
+                            if all_search_results:
+                                print("\n[検索結果詳細]")
+                                display_search_results_table(all_search_results, language=agent_language)
                     except RuntimeError as exc:
-                        print(f"[WARN] 自動検索に失敗しました: {exc}")
+                        print(f"[ERROR] 自動検索に失敗しました: {exc}")
+                        print("[ヒント] SearXNGサーバーの状態を確認してください: /status")
                     except Exception as exc:
                         print(f"[WARN] 自動検索中に想定外のエラー: {exc}")
                 chat.add_user_message(user_input)
@@ -480,6 +633,48 @@ def main():
                 else:
                     response = chat.get_response()
                     print(response)
+                
+                # Save exchange incrementally after each response
+                if current_session_id is not None:
+                    history = chat.get_history()
+                    
+                    # Extract last user and assistant messages (incremental save for V2 schema)
+                    if len(history) >= 2:
+                        last_user = None
+                        last_assistant = None
+                        search_results = None
+                        
+                        # Find last user and assistant messages
+                        for msg in reversed(history):
+                            if msg.get("role") == "assistant" and last_assistant is None:
+                                last_assistant = msg.get("content", "")
+                                search_results = msg.get("search_results")
+                            elif msg.get("role") == "user" and last_user is None:
+                                last_user = msg.get("content", "")
+                            
+                            if last_user and last_assistant:
+                                break
+                        
+                        # Save exchange if both messages found
+                        if last_user and last_assistant:
+                            eval_score = chat.get_last_evaluation_score()
+                            try:
+                                session_manager.save_exchange(
+                                    session_id=current_session_id,
+                                    user_message=last_user,
+                                    assistant_message=last_assistant,
+                                    model=args.model,
+                                    language=agent_language,
+                                    search_results=search_results,
+                                    evaluation_score=eval_score
+                                )
+                            except Exception as e:
+                                print(f"\n[警告] Exchange保存に失敗しました: {e}")
+                            
+                            # Display search results used in this exchange
+                            if search_results:
+                                print("\n[この応答で使用された検索結果]")
+                                display_search_results_table(search_results, language=agent_language)
         except KeyboardInterrupt:
             print("\n[終了]")
     finally:

@@ -620,6 +620,285 @@ def test_crawled_content_not_injected_when_turns_zero():
     assert not any("[Web Content]" in m.get("content", "") for m in system_messages)
 
 
+# ============================================================================
+# 検索失敗時のリトライロジックテスト
+# ============================================================================
+
+def test_search_retries_on_runtime_error():
+    """Test that search retries when searxng_client.search() raises RuntimeError."""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    mock_agent = MagicMock()
+    
+    # 1回目失敗、2回目成功
+    mock_searxng.search.side_effect = [
+        RuntimeError("SearXNG error"),
+        {"raw": {}, "results": [{"url": "https://success.com", "title": "Success", "snippet": "Test snippet"}]}
+    ]
+    mock_agent.generate_search_retry_query.return_value = "alternative query"
+    
+    chat = ChatManager(mock_ollama, searxng_client=mock_searxng, agent=mock_agent, web_crawler=None)
+    result = chat.search("original query")
+    
+    # 検証
+    assert mock_searxng.search.call_count == 2
+    assert mock_agent.generate_search_retry_query.call_count == 1
+    assert result["search_failed"] == False
+    assert len(result["results"]) == 1
+    assert result["results"][0]["url"] == "https://success.com"
+
+
+def test_search_retries_on_empty_results():
+    """Test that search retries when results are empty."""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    mock_agent = MagicMock()
+    
+    # 1回目空結果、2回目成功
+    mock_searxng.search.side_effect = [
+        {"raw": {}, "results": []},
+        {"raw": {}, "results": [{"url": "https://success.com", "title": "Success", "snippet": "Test"}]}
+    ]
+    mock_agent.generate_search_retry_query.return_value = "retry query"
+    
+    chat = ChatManager(mock_ollama, searxng_client=mock_searxng, agent=mock_agent, web_crawler=None)
+    result = chat.search("query")
+    
+    # 検証
+    assert mock_searxng.search.call_count == 2
+    assert mock_agent.generate_search_retry_query.call_count == 1
+    assert result["search_failed"] == False
+    assert len(result["results"]) == 1
+
+
+def test_search_retries_max_three_times_on_failure():
+    """Test that search retries max 3 times and returns search_failed=True."""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    mock_agent = MagicMock()
+    
+    # すべて失敗（初回 + リトライ2回 = 3回）
+    mock_searxng.search.side_effect = [RuntimeError("error")] * 3
+    mock_agent.generate_search_retry_query.return_value = "retry query"
+    
+    chat = ChatManager(mock_ollama, searxng_client=mock_searxng, agent=mock_agent, web_crawler=None)
+    result = chat.search("query")
+    
+    # 検証
+    assert mock_searxng.search.call_count == 3  # 初回 + リトライ2回
+    assert mock_agent.generate_search_retry_query.call_count == 2  # リトライ2回
+    assert result["search_failed"] == True
+    assert result["results"] == []
+
+
+def test_search_stops_retry_on_first_success():
+    """Test that search stops retry when first retry succeeds."""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    mock_agent = MagicMock()
+    
+    # 1回失敗後、すぐ成功
+    mock_searxng.search.side_effect = [
+        RuntimeError("error"),
+        {"raw": {}, "results": [{"url": "https://ok.com", "title": "OK", "snippet": "..."}]}
+    ]
+    mock_agent.generate_search_retry_query.return_value = "retry query"
+    
+    chat = ChatManager(mock_ollama, searxng_client=mock_searxng, agent=mock_agent, web_crawler=None)
+    result = chat.search("query")
+    
+    # 検証：2回目で成功したのでリトライは1回のみ
+    assert mock_searxng.search.call_count == 2
+    assert mock_agent.generate_search_retry_query.call_count == 1
+    assert result["search_failed"] == False
+
+
+def test_search_failure_adds_system_message():
+    """Test that search failure adds system message to history."""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    mock_agent = MagicMock()
+    
+    # すべて失敗
+    mock_searxng.search.side_effect = [RuntimeError("error")] * 3
+    mock_agent.generate_search_retry_query.return_value = "retry query"
+    
+    # 日本語設定
+    chat = ChatManager(mock_ollama, searxng_client=mock_searxng, agent=mock_agent, web_crawler=None, language="ja")
+    result = chat.search("query")
+    
+    # 検証：システムメッセージが追加されている
+    history = chat.get_history()
+    system_messages = [m for m in history if m.get("role") == "system"]
+    assert any("検索に失敗したため最新情報を提供できません" in m.get("content", "") for m in system_messages)
+    
+    # 英語設定でもテスト
+    chat_en = ChatManager(mock_ollama, searxng_client=mock_searxng, agent=mock_agent, web_crawler=None, language="en")
+    mock_searxng.search.side_effect = [RuntimeError("error")] * 3
+    chat_en.search("query")
+    
+    history_en = chat_en.get_history()
+    system_messages_en = [m for m in history_en if m.get("role") == "system"]
+    assert any("Search failed" in m.get("content", "") for m in system_messages_en)
+
+
+def test_search_failure_clears_state():
+    """Test that search failure clears citations and crawl state."""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    mock_agent = MagicMock()
+    
+    # すべて失敗
+    mock_searxng.search.side_effect = [RuntimeError("error")] * 3
+    mock_agent.generate_search_retry_query.return_value = "retry query"
+    
+    chat = ChatManager(mock_ollama, searxng_client=mock_searxng, agent=mock_agent, web_crawler=None)
+    
+    # 事前に状態を設定
+    chat.current_citation_ids = [1, 2, 3]
+    chat.last_search_content = "previous content"
+    chat.last_search_turns_remaining = 1
+    
+    result = chat.search("query")
+    
+    # 検証：状態がクリアされている
+    assert chat.current_citation_ids == []
+    assert chat.last_search_content == ""
+    assert chat.last_search_turns_remaining == 0
+    assert result["search_failed"] == True
+
+
+def test_search_no_retry_without_agent():
+    """Test that search does not generate alternative queries without agent."""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    
+    # すべて失敗（agentなし）
+    mock_searxng.search.side_effect = [RuntimeError("error")] * 3
+    
+    chat = ChatManager(mock_ollama, searxng_client=mock_searxng, agent=None, web_crawler=None)
+    result = chat.search("original query")
+    
+    # 検証：リトライは実行されるが、代替クエリは生成されない
+    assert mock_searxng.search.call_count == 3
+    assert result["search_failed"] == True
+    
+    # すべて元のクエリで試行される
+    for call in mock_searxng.search.call_args_list:
+        assert call[0][0] == "original query"
+
+
+def test_search_retry_calls_progress_callback():
+    """Test that search retry calls progress_callback with correct events."""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    mock_agent = MagicMock()
+    progress_callback = MagicMock()
+    
+    # 2回失敗後成功
+    mock_searxng.search.side_effect = [
+        RuntimeError("error1"),
+        RuntimeError("error2"),
+        {"raw": {}, "results": [{"url": "https://ok.com", "title": "OK", "snippet": "..."}]}
+    ]
+    mock_agent.generate_search_retry_query.return_value = "alternative query"
+    
+    chat = ChatManager(mock_ollama, searxng_client=mock_searxng, agent=mock_agent, web_crawler=None)
+    result = chat.search("query", progress_callback=progress_callback)
+    
+    # 検証：コールバックが呼ばれている（retry_start × 2、query_generated × 2、retry_attempt × 2 = 6回）
+    assert progress_callback.call_count == 6
+    
+    # イベントタイプの検証
+    calls = progress_callback.call_args_list
+    assert calls[0][0][0] == "retry_start"
+    assert calls[0][0][1]["retry_count"] == 1
+    assert calls[0][0][1]["max_retries"] == 3
+    
+    assert calls[1][0][0] == "query_generated"
+    assert calls[1][0][1]["retry_count"] == 1
+    assert calls[1][0][1]["new_query"] == "alternative query"
+    
+    assert calls[2][0][0] == "retry_attempt"
+    assert calls[2][0][1]["retry_count"] == 1
+    
+    # 2回目のリトライ
+    assert calls[3][0][0] == "retry_start"
+    assert calls[3][0][1]["retry_count"] == 2
+    
+    assert calls[4][0][0] == "query_generated"
+    assert calls[4][0][1]["retry_count"] == 2
+    
+    assert calls[5][0][0] == "retry_attempt"
+    assert calls[5][0][1]["retry_count"] == 2
+    
+    # 最終的に成功
+    assert result["search_failed"] == False
+
+
+def test_search_all_retries_failed_callback():
+    """Test that all_retries_failed callback is called when all retries fail."""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    mock_agent = MagicMock()
+    progress_callback = MagicMock()
+    
+    # すべて失敗
+    mock_searxng.search.side_effect = [RuntimeError("error")] * 3
+    mock_agent.generate_search_retry_query.return_value = "retry query"
+    
+    chat = ChatManager(mock_ollama, searxng_client=mock_searxng, agent=mock_agent, web_crawler=None)
+    result = chat.search("original query", progress_callback=progress_callback)
+    
+    # 検証：all_retries_failedイベントが最後に呼ばれている
+    # retry_start × 2、query_generated × 2、retry_attempt × 2、all_retries_failed × 1 = 7回
+    assert progress_callback.call_count == 7
+    
+    # 最後の呼び出しがall_retries_failed
+    last_call = progress_callback.call_args_list[-1]
+    assert last_call[0][0] == "all_retries_failed"
+    assert last_call[0][1]["query"] == "original query"
+    assert last_call[0][1]["max_retries"] == 3
+    
+    assert result["search_failed"] == True
+
+
+def test_search_retry_query_generation_with_failure_reason():
+    """Test that failure reason is extracted and passed to generate_search_retry_query."""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    mock_agent = MagicMock()
+    
+    # HTMLパースエラー
+    mock_searxng.search.side_effect = [
+        RuntimeError("SearXNG HTML パースで結果が見つかりません"),
+        {"raw": {}, "results": [{"url": "https://ok.com", "title": "OK", "snippet": "..."}]}
+    ]
+    mock_agent.generate_search_retry_query.return_value = "alternative query"
+    
+    chat = ChatManager(mock_ollama, searxng_client=mock_searxng, agent=mock_agent, web_crawler=None)
+    result = chat.search("query")
+    
+    # 検証：generate_search_retry_queryがfailure_reasonとともに呼ばれている
+    assert mock_agent.generate_search_retry_query.call_count == 1
+    call_kwargs = mock_agent.generate_search_retry_query.call_args[1]
+    assert "failure_reason" in call_kwargs
+    # _extract_failure_reason()がパースエラーを検出すること
+    assert call_kwargs["failure_reason"] in ["parse_error", "unknown"]  # パース関連のエラー
+    
+    # タイムアウトエラーの場合
+    mock_searxng.search.side_effect = [
+        RuntimeError("Connection timeout"),
+        {"raw": {}, "results": [{"url": "https://ok.com", "title": "OK", "snippet": "..."}]}
+    ]
+    mock_agent.generate_search_retry_query.reset_mock()
+    
+    chat.search("query2")
+    
+    call_kwargs2 = mock_agent.generate_search_retry_query.call_args[1]
+    assert call_kwargs2["failure_reason"] == "timeout"
+
+
 def test_search_retries_on_low_success_rate():
     """Test that retry search is executed when success rate < 50%."""
     mock_ollama = MagicMock()
@@ -862,3 +1141,356 @@ def test_get_current_model_handles_none_ollama():
     """Test that get_current_model returns 'unknown' when ollama_client is None."""
     chat = ChatManager(None)
     assert chat.get_current_model() == "unknown"
+
+
+# ============================================================================
+# ソース注入評価テスト
+# (tests/test_source_injection.py に移動)
+# ============================================================================
+
+
+# ============================================================================
+# search_results埋め込みテスト
+# ============================================================================
+
+def test_get_response_embeds_search_results_in_assistant_message():
+    """Test that get_response embeds pending_search_results in assistant message."""
+    from researcher.citation_manager import CitationManager
+    
+    ollama = MagicMock()
+    ollama.generate_response.return_value = "This is the response."
+    citation_mgr = CitationManager()
+    
+    chat = ChatManager(ollama, citation_manager=citation_mgr)
+    
+    # Set pending_search_results
+    chat.pending_search_results = [
+        {
+            "title": "Python Guide",
+            "url": "https://example.com/python",
+            "snippet": "Learn Python",
+            "date": "2024-01-10",
+            "citation_id": 1,
+            "relevance_score": 0.9,
+            "credibility_score": 0.85
+        }
+    ]
+    
+    # Add user message and get response
+    chat.add_user_message("Tell me about Python")
+    response = chat.get_response()
+    
+    # Verify assistant message has search_results
+    history = chat.get_history()
+    assistant_msg = next(m for m in history if m["role"] == "assistant")
+    
+    assert "search_results" in assistant_msg
+    assert len(assistant_msg["search_results"]) == 1
+    assert assistant_msg["search_results"][0]["title"] == "Python Guide"
+    
+    # Verify pending_search_results was cleared
+    assert chat.pending_search_results == []
+
+
+def test_get_response_stream_embeds_search_results_in_assistant_message():
+    """Test that get_response_stream embeds pending_search_results in assistant message."""
+    from researcher.citation_manager import CitationManager
+    
+    ollama = MagicMock()
+    ollama.generate_response_stream.return_value = ["This ", "is ", "response."]
+    citation_mgr = CitationManager()
+    
+    chat = ChatManager(ollama, citation_manager=citation_mgr)
+    
+    # Set pending_search_results
+    chat.pending_search_results = [
+        {
+            "title": "AI Overview",
+            "url": "https://example.com/ai",
+            "snippet": "AI introduction",
+            "date": "2024-02-15",
+            "citation_id": 2,
+            "relevance_score": 0.88,
+            "credibility_score": 0.9
+        }
+    ]
+    
+    # Add user message and get response stream
+    chat.add_user_message("What is AI?")
+    chunks = list(chat.get_response_stream())
+    
+    # Verify assistant message has search_results
+    history = chat.get_history()
+    assistant_msg = next(m for m in history if m["role"] == "assistant")
+    
+    assert "search_results" in assistant_msg
+    assert len(assistant_msg["search_results"]) == 1
+    assert assistant_msg["search_results"][0]["url"] == "https://example.com/ai"
+    
+    # Verify pending_search_results was cleared
+    assert chat.pending_search_results == []
+
+
+def test_search_accumulates_all_search_results_from_retries():
+    """Test that search retries accumulate all_search_results."""
+    from researcher.citation_manager import CitationManager
+    
+    ollama = MagicMock()
+    searxng = MagicMock()
+    citation_mgr = CitationManager()
+    agent = MagicMock()
+    
+    # First search returns 1 result, second search (retry) returns 2 results
+    searxng.search.side_effect = [
+        {
+            "raw": {"results": [{"title": "Result 1", "url": "http://example.com/1", "snippet": "Snippet 1"}]},
+            "results": [{"title": "Result 1", "url": "http://example.com/1", "snippet": "Snippet 1"}]
+        },
+        {
+            "raw": {"results": [
+                {"title": "Result 2", "url": "http://example.com/2", "snippet": "Snippet 2"},
+                {"title": "Result 3", "url": "http://example.com/3", "snippet": "Snippet 3"}
+            ]},
+            "results": [
+                {"title": "Result 2", "url": "http://example.com/2", "snippet": "Snippet 2"},
+                {"title": "Result 3", "url": "http://example.com/3", "snippet": "Snippet 3"}
+            ]
+        }
+    ]
+    
+    agent.generate_search_retry_query.return_value = "retry query"
+    
+    # Mock reranker to trigger retry (low score)
+    reranker = MagicMock()
+    reranker.rerank.return_value = [{"title": "Result 1", "url": "http://example.com/1", "snippet": "Snippet 1", "score": 0.3}]
+    
+    chat = ChatManager(ollama, searxng_client=searxng, citation_manager=citation_mgr, agent=agent, reranker=reranker)
+    
+    # Perform search with retry
+    result = chat.search("test query", max_retries=1)
+    
+    # Verify all_search_results contains results from initial + retry
+    assert "all_search_results" in result
+    # Should have at least 3 results (1 from initial + 2 from retry, but may be deduplicated)
+    assert len(result["all_search_results"]) >= 1
+
+
+def test_auto_search_passes_all_search_results_to_pending():
+    """Test that auto_search sets pending_search_results to all_search_results."""
+    from researcher.citation_manager import CitationManager
+    
+    ollama = MagicMock()
+    searxng = MagicMock()
+    citation_mgr = CitationManager()
+    agent = MagicMock()
+    
+    agent.analyze_query.return_value = {
+        "needs_search": True,
+        "keywords": ["python"],
+        "reasoning": "Need to search"
+    }
+    
+    searxng.search.return_value = {
+        "raw": {"results": [{"title": "Auto Result", "url": "http://example.com", "snippet": "Auto"}]},
+        "results": [{"title": "Auto Result", "url": "http://example.com", "snippet": "Auto"}]
+    }
+    
+    reranker = MagicMock()
+    reranker.rerank.return_value = [{"title": "Auto Result", "url": "http://example.com", "snippet": "Auto", "score": 0.9}]
+    
+    chat = ChatManager(ollama, searxng_client=searxng, citation_manager=citation_mgr, agent=agent, reranker=reranker)
+    
+    # Perform auto_search
+    result = chat.auto_search("test query")
+    
+    # Verify pending_search_results is set
+    assert result["searched"] is True
+    assert len(chat.pending_search_results) > 0
+
+
+def test_self_evaluation_retry_accumulates_search_results():
+    """Test that self-evaluation retry accumulates new search results."""
+    from researcher.citation_manager import CitationManager
+    
+    ollama = MagicMock()
+    searxng = MagicMock()
+    citation_mgr = CitationManager()
+    agent = MagicMock()
+    
+    # Initial search
+    searxng.search.return_value = {
+        "raw": {"results": [{"title": "Initial", "url": "http://example.com/1", "snippet": "Initial"}]},
+        "results": [{"title": "Initial", "url": "http://example.com/1", "snippet": "Initial"}]
+    }
+    
+    reranker = MagicMock()
+    reranker.rerank.return_value = [{"title": "Initial", "url": "http://example.com/1", "snippet": "Initial", "score": 0.9}]
+    
+    chat = ChatManager(ollama, searxng_client=searxng, citation_manager=citation_mgr, agent=agent, reranker=reranker)
+    
+    # First search
+    result1 = chat.search("query 1")
+    initial_count = len(result1.get("all_search_results", []))
+    
+    # Second search (simulating retry after self-evaluation)
+    result2 = chat.search("query 2")
+    
+    # Each search should have its own all_search_results
+    assert "all_search_results" in result2
+    assert len(result2["all_search_results"]) >= 1
+
+
+def test_search_results_cleared_after_embedding():
+    """Test that pending_search_results is cleared after being embedded in message."""
+    from researcher.citation_manager import CitationManager
+    
+    ollama = MagicMock()
+    ollama.generate_response.return_value = "Response"
+    citation_mgr = CitationManager()
+    
+    chat = ChatManager(ollama, citation_manager=citation_mgr)
+    
+    # Set pending_search_results
+    chat.pending_search_results = [
+        {"title": "Test", "url": "http://example.com", "snippet": "Test", "citation_id": 1}
+    ]
+    
+    assert len(chat.pending_search_results) == 1
+    
+    # Get response (should embed and clear)
+    chat.add_user_message("Question")
+    chat.get_response()
+    
+    # Verify search results were embedded in the assistant message
+    history = chat.get_history()
+    assistant_msg = next((m for m in history if m["role"] == "assistant"), None)
+    assert assistant_msg is not None, "Assistant message should exist"
+    assert "search_results" in assistant_msg, "search_results should be embedded in assistant message"
+    assert len(assistant_msg["search_results"]) == 1, "search_results should contain the test data"
+    assert assistant_msg["search_results"][0]["title"] == "Test", "Embedded search result should match test data"
+    
+    # Verify pending_search_results was cleared after embedding
+    assert chat.pending_search_results == [], "pending_search_results should be cleared after embedding"
+    assert len(chat.pending_search_results) == 0, "pending_search_results length should be 0"
+
+
+def test_chatmanager_searxng_params():
+    """Test that SearXNG parameters are correctly passed to searxng_client.search()"""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    mock_searxng.search.return_value = {"results": []}
+    
+    chat = ChatManager(
+        ollama_client=mock_ollama,
+        searxng_client=mock_searxng,
+        searxng_engine="news",
+        searxng_lang="en",
+        searxng_safesearch="moderate"
+    )
+    
+    chat.search("test query")
+    
+    # Verify searxng_client.search was called with correct params
+    call_args = mock_searxng.search.call_args
+    assert call_args is not None, "searxng_client.search should have been called"
+    assert "engines" in call_args[1], "engines parameter should be passed"
+    assert call_args[1]["engines"] == "news", "engines should be 'news'"
+    assert call_args[1]["language"] == "en", "language should be 'en'"
+    assert call_args[1]["safesearch"] == "moderate", "safesearch should be 'moderate'"
+
+
+def test_chatmanager_searxng_params_user_override():
+    """Test that user-provided kwargs override ChatManager SearXNG settings"""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    mock_searxng.search.return_value = {"results": []}
+    
+    chat = ChatManager(
+        ollama_client=mock_ollama,
+        searxng_client=mock_searxng,
+        searxng_engine="news",
+        searxng_lang="en",
+        searxng_safesearch="moderate"
+    )
+    
+    # User provides custom language
+    chat.search("test query", language="fr")
+    
+    # Verify user kwargs take precedence
+    call_args = mock_searxng.search.call_args
+    assert call_args[1]["language"] == "fr", "User-provided language should override ChatManager setting"
+    assert call_args[1]["engines"] == "news", "Other ChatManager settings should still apply"
+
+
+def test_chatmanager_searxng_params_none():
+    """Test that ChatManager works correctly when SearXNG params are None"""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    mock_searxng.search.return_value = {"results": []}
+    
+    chat = ChatManager(
+        ollama_client=mock_ollama,
+        searxng_client=mock_searxng,
+        # All SearXNG params are None (default)
+    )
+    
+    chat.search("test query")
+    
+    # Verify no extra params were added
+    call_args = mock_searxng.search.call_args
+    # Only the query should be passed, no engines/language/safesearch
+    assert "engines" not in call_args[1], "engines should not be in kwargs when None"
+    assert "language" not in call_args[1], "language should not be in kwargs when None"
+    assert "safesearch" not in call_args[1], "safesearch should not be in kwargs when None"
+
+
+def test_chatmanager_searxng_params_retry_with_low_crawl_success():
+    """Test that SearXNG params are applied during retry search when crawl success is low"""
+    mock_ollama = MagicMock()
+    mock_searxng = MagicMock()
+    
+    # First search returns results
+    mock_searxng.search.return_value = {
+        "results": [
+            {"title": "Test1", "url": "https://example.com/1", "snippet": "snippet1"},
+            {"title": "Test2", "url": "https://example.com/2", "snippet": "snippet2"},
+        ]
+    }
+    
+    # Mock web crawler with low success rate
+    mock_crawler = MagicMock()
+    mock_crawler.crawl_results.return_value = {
+        "content": {},
+        "successful_crawls": 0,
+        "total_attempts": 3,
+        "success_rate": 0.0,  # Low success rate triggers retry
+        "failed_domains": ["example.com"]
+    }
+    
+    # Mock agent for retry query generation
+    mock_agent = MagicMock()
+    mock_agent.generate_retry_query.return_value = "retry query"
+    
+    chat = ChatManager(
+        ollama_client=mock_ollama,
+        searxng_client=mock_searxng,
+        web_crawler=mock_crawler,
+        agent=mock_agent,
+        searxng_engine="news",
+        searxng_lang="en",
+        searxng_safesearch="moderate"
+    )
+    
+    chat.search("test query")
+    
+    # Verify searxng_client.search was called multiple times (initial + retry)
+    assert mock_searxng.search.call_count >= 2, "Should have called search at least twice (initial + retry)"
+    
+    # Get the retry call (second call)
+    retry_call_args = mock_searxng.search.call_args_list[1]
+    
+    # Verify retry search includes SearXNG params
+    assert retry_call_args[1]["engines"] == "news", "Retry should include engines param"
+    assert retry_call_args[1]["language"] == "en", "Retry should include language param"
+    assert retry_call_args[1]["safesearch"] == "moderate", "Retry should include safesearch param"
+

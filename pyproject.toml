@@ -16,6 +16,13 @@ dependencies = [
     "streamlit>=1.38.0"
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-playwright>=0.4.0",
+    "playwright>=1.40.0"
+]
+
 [project.scripts]
 researcher = "researcher.cli:main"
 researcher-webui = "researcher.webui_launcher:main"

@@ -11,6 +11,7 @@ class StubChatManager:
     def __init__(self, *args, **kwargs):
         self.auto_search_calls = []
         self.response_calls = 0
+        self.last_evaluation_score = None
 
     def add_system_message(self, content):
         self.system_message = content
@@ -32,12 +33,18 @@ class StubChatManager:
         self.response_calls += 1
         return iter(["stream"])
 
-    def search(self, query):
+    def search(self, query, progress_callback=None, **kwargs):
         return {"formatted": f"search:{query}", "results": [], "raw": {}}
 
-    def auto_search(self, query):
+    def auto_search(self, query, progress_callback=None):
         self.auto_search_calls.append(query)
         return {"searched": True, "formatted": "auto", "results": [], "analysis": {}}
+
+    def get_last_evaluation_score(self):
+        return self.last_evaluation_score
+
+    def get_current_model(self):
+        return "test-model"
 
 
 class FakeOllamaClient:

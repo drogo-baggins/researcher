@@ -16,7 +16,7 @@ def main():
     This function uses subprocess.run to invoke the Streamlit runtime with
     the WebUI module, ensuring proper environment setup and signal handling.
     """
-    webui_path = Path(__file__).parent / "webui.py"
+    webui_path = Path(__file__).parent / "Home.py"
     
     try:
         # Run streamlit with the WebUI module

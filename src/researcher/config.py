@@ -51,6 +51,20 @@ def get_embedding_model(cli_arg: Optional[str] = None) -> str:
     return DEFAULT_EMBEDDING_MODEL
 
 
+def get_evaluation_model(cli_arg: Optional[str] = None) -> Optional[str]:
+    """Resolve evaluation model name: CLI > env > None (use response model).
+    
+    Returns None to use the same model as response generation.
+    Recommended: lightweight accurate model like 'llama3.2:3b' for faster evaluation.
+    """
+    if cli_arg:
+        return cli_arg
+    env_value = os.environ.get("EVALUATION_MODEL")
+    if env_value:
+        return env_value
+    return None  # Use response generation model by default
+
+
 def get_relevance_threshold(cli_arg: Optional[float] = None) -> float:
     """Resolve relevance threshold: CLI > env > default (0.5).
     
@@ -238,6 +252,88 @@ def ensure_searxng_running() -> bool:
         logging.debug(f"SearXNGの自動起動に失敗: {e}")
     
     return False
+
+
+# Settings persistence configuration
+SETTINGS_FILE_PATH = Path.home() / ".researcher" / "settings.json"
+
+DEFAULT_SETTINGS = {
+    "search_model": "llama3.2",
+    "response_model": "llama3",
+    "eval_model": "llama3.2:3b",
+    "searxng_engine": "general",
+    "searxng_lang": "ja",
+    "searxng_safesearch": "off"
+}
+
+
+def load_settings() -> Dict[str, Any]:
+    """Load user settings from JSON file.
+    
+    Returns:
+        Settings dictionary merged with defaults (missing keys filled from DEFAULT_SETTINGS)
+    """
+    if not SETTINGS_FILE_PATH.exists():
+        return deepcopy(DEFAULT_SETTINGS)
+    
+    try:
+        with open(SETTINGS_FILE_PATH, "r", encoding="utf-8") as f:
+            loaded_settings = json.load(f)
+            
+            # Merge with defaults (fill missing keys)
+            settings = deepcopy(DEFAULT_SETTINGS)
+            if isinstance(loaded_settings, dict):
+                settings.update(loaded_settings)
+            else:
+                logging.warning("設定ファイルの形式が不正です。デフォルト設定を使用します")
+            
+            return settings
+    except json.JSONDecodeError as e:
+        logging.warning(f"設定ファイルのJSON解析エラー: {e}。デフォルト設定を使用します")
+        return deepcopy(DEFAULT_SETTINGS)
+    except Exception as e:
+        logging.warning(f"設定ファイル読み込みエラー: {e}。デフォルト設定を使用します")
+        return deepcopy(DEFAULT_SETTINGS)
+
+
+def save_settings(settings: Dict[str, Any]) -> bool:
+    """Save user settings to JSON file with atomic write.
+    
+    Args:
+        settings: Settings dictionary to save
+    
+    Returns:
+        True if save successful, False otherwise
+    """
+    try:
+        SETTINGS_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Atomic write using temporary file and os.replace
+        temp_fd, temp_path = tempfile.mkstemp(
+            prefix=".settings_tmp_",
+            suffix=".json",
+            dir=SETTINGS_FILE_PATH.parent,
+            text=True
+        )
+        
+        try:
+            with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+                json.dump(settings, f, indent=2, ensure_ascii=False)
+            
+            # Atomic replace: os.replace is atomic on all platforms
+            os.replace(temp_path, SETTINGS_FILE_PATH)
+            return True
+        except Exception as e:
+            # Clean up temp file if something goes wrong
+            try:
+                os.unlink(temp_path)
+            except Exception:
+                pass
+            raise e
+        
+    except Exception as exc:
+        logging.warning(f"設定保存エラー: {exc}")
+        return False
 
 
 # Blacklist persistence configuration
