@@ -56,41 +56,57 @@ def extract_unique_tags() -> List[str]:
     return []
 
 
-def render_unified_filters():
-    """統合フィルタUI（検索・日付・タグ）"""
-    st.subheader("🔍 フィルタ")
+def render_horizontal_filters():
+    """水平フィルタUI（検索・タグ・日付トグル・日付範囲を1行に配置）"""
+    # Column layout: [4, 3, 1, 2, 2] for search, tags, date toggle, date from, date to
+    col_search, col_tags, col_date_toggle, col_date_from, col_date_to = st.columns([4, 3, 1, 2, 2])
     
     # Keyword search
-    search_query = st.text_input(
-        "キーワード検索",
-        key="session_search",
-        placeholder="セッション名、履歴、タグで検索..."
-    )
-    
-    # Date filter
-    col1, col2 = st.columns(2)
-    with col1:
-        date_from = st.date_input("開始日", key="date_from", value=None)
-    with col2:
-        date_to = st.date_input("終了日", key="date_to", value=None)
+    with col_search:
+        search_query = st.text_input(
+            "キーワード検索",
+            key="session_search",
+            placeholder="セッション名、履歴、タグで検索...",
+            label_visibility="collapsed"
+        )
     
     # Tag filter
-    try:
-        # Use efficient tag extraction without loading all sessions
-        unique_tags = extract_unique_tags()
-        
-        if unique_tags:
-            selected_tags = st.multiselect(
-                "タグフィルタ",
-                options=unique_tags,
-                key="tag_filter",
-                help="複数選択でAND条件"
-            )
-        else:
+    with col_tags:
+        try:
+            # Use efficient tag extraction without loading all sessions
+            unique_tags = extract_unique_tags()
+            
+            if unique_tags:
+                selected_tags = st.multiselect(
+                    "タグフィルタ",
+                    options=unique_tags,
+                    key="tag_filter",
+                    help="複数選択でAND条件",
+                    label_visibility="collapsed"
+                )
+            else:
+                selected_tags = None
+        except Exception as e:
+            LOGGER.error(f"Tag filter error: {e}")
             selected_tags = None
-    except Exception as e:
-        LOGGER.error(f"Tag filter error: {e}")
-        selected_tags = None
+    
+    # Date filter toggle
+    with col_date_toggle:
+        st.write("")  # Spacing
+        date_filter_enabled = st.checkbox(
+            "Date",
+            key="date_filter_enabled",
+            value=st.session_state.get("date_filter_enabled", False)
+        )
+    
+    # Date range inputs (conditional)
+    date_from = None
+    date_to = None
+    if date_filter_enabled:
+        with col_date_from:
+            date_from = st.date_input("開始日", key="date_from")
+        with col_date_to:
+            date_to = st.date_input("終了日", key="date_to")
     
     # Convert dates to ISO format
     date_from_str = date_from.isoformat() if date_from else None
@@ -165,45 +181,101 @@ def get_filtered_sessions(
         return []
 
 
-def render_session_selector(sessions: List[Dict]) -> Optional[int]:
-    """selectboxによるセッション選択UI"""
+def handle_session_selection():
+    """Handle single row selection by resetting all other checkboxes"""
+    if "session_list_df" in st.session_state:
+        df = st.session_state.session_list_df
+        
+        # Find the row with Select=True
+        selected_rows = df[df["選択"] == True]
+        
+        if len(selected_rows) > 1:
+            # Multiple selections detected - keep only the last one
+            # Reset all selections first
+            df["選択"] = False
+            # Set the last selected row (assume last in filtered set)
+            last_selected_idx = selected_rows.index[-1]
+            df.loc[last_selected_idx, "選択"] = True
+            st.session_state.session_list_df = df
+        
+        # Update selected_session_id based on the selection
+        selected_rows = df[df["選択"] == True]
+        if len(selected_rows) == 1:
+            st.session_state.selected_session_id = int(selected_rows.iloc[0]["ID"])
+        else:
+            st.session_state.selected_session_id = None
+
+
+def render_compact_session_list(sessions: List[Dict]) -> Optional[int]:
+    """コンパクトなセッション選択UI（高さ制限付き、チェックボックスで単一選択）"""
     if not sessions:
         st.info("セッションがありません")
         return None
     
-    st.write(f"**{len(sessions)}件** のセッション")
+    st.write(f"**{len(sessions)}件** のセッション（行をクリックして選択）")
     
-    # Build selectbox options with unique keys
-    options = []
-    option_map = {}
+    # Build dataframe for session list with height constraint and selection column
+    import pandas as pd
+    
+    session_data = []
+    current_session_id = st.session_state.get("selected_session_id")
+    
     for session in sessions:
         updated_at = session.get('updated_at', '')
         updated_at_display = updated_at[:10] if updated_at and len(updated_at) >= 10 else 'N/A'
         
         # タグ表示を追加（最大2個まで）
         tags = session.get('tags', [])
-        tags_display = f" 🏷️{','.join(tags[:2])}" if tags else ""
+        tags_display = ','.join(tags[:2]) if tags else ""
         
-        # Include session ID in label to ensure uniqueness
-        session_id = session['id']
-        label = f"{session['name']} ({updated_at_display}){tags_display} #{session_id}"
-        options.append(label)
-        option_map[label] = session_id
+        # Check if this session is currently selected
+        is_selected = (session['id'] == current_session_id)
+        
+        session_data.append({
+            "選択": is_selected,
+            "ID": session['id'],
+            "セッション名": session['name'],
+            "更新日": updated_at_display,
+            "タグ": tags_display
+        })
     
-    selected_label = st.selectbox(
-        "セッションを選択",
-        options=options,
-        key="session_selector",
-        help="最新500件まで表示（フィルタで絞り込み可能）"
+    df = pd.DataFrame(session_data)
+    
+    # Initialize or update session_list_df in session state
+    if "session_list_df" not in st.session_state or len(st.session_state.session_list_df) != len(df):
+        st.session_state.session_list_df = df
+    
+    # Display sessions with editable selection column
+    edited_df = st.data_editor(
+        st.session_state.session_list_df,
+        hide_index=True,
+        column_config={
+            "選択": st.column_config.CheckboxColumn(
+                "選択",
+                width="small",
+                help="セッションを選択",
+                default=False
+            ),
+            "ID": st.column_config.NumberColumn("ID", width="small", disabled=True),
+            "セッション名": st.column_config.TextColumn("セッション名", width="large", disabled=True),
+            "更新日": st.column_config.TextColumn("更新日", width="small", disabled=True),
+            "タグ": st.column_config.TextColumn("タグ", width="medium", disabled=True)
+        },
+        key="session_list_editor",
+        height=200,
+        use_container_width=True,
+        on_change=handle_session_selection,
+        disabled=["ID", "セッション名", "更新日", "タグ"]
     )
     
-    if selected_label:
-        session_id = option_map[selected_label]
-        st.session_state.selected_session_id = session_id
-        return session_id
+    # Update session state with edited dataframe
+    st.session_state.session_list_df = edited_df
     
-    st.session_state.selected_session_id = None
-    return None
+    # Handle selection enforcement (ensure only one checkbox is selected)
+    handle_session_selection()
+    
+    # Return the selected session ID
+    return st.session_state.get("selected_session_id")
 
 
 def format_search_results_table(search_results: List[Dict]) -> Optional[List[Dict]]:
@@ -264,12 +336,11 @@ def render_session_detail(session_id: int):
         with col4:
             st.metric("言語", language)
         
-        # タグ編集UI
-        st.markdown("**タグ:**")
-        col_tags, col_edit = st.columns([3, 1])
-        
-        with col_tags:
+        # タグ編集UI（エクスパンダー内）
+        with st.expander("🏷️ タグ管理", expanded=False):
+            # タグ表示
             if tags:
+                st.markdown("**現在のタグ:**")
                 tags_html = " ".join([
                     f'<span style="background-color: #e0e0e0; padding: 4px 12px; border-radius: 6px; margin-right: 6px; font-size: 0.9em;">🏷️ {tag}</span>'
                     for tag in tags
@@ -277,19 +348,12 @@ def render_session_detail(session_id: int):
                 st.markdown(tags_html, unsafe_allow_html=True)
             else:
                 st.info("タグが設定されていません")
-        
-        with col_edit:
-            if st.button("✏️ 編集", key=f"edit_tags_{session_id}"):
-                st.session_state[f"editing_tags_{session_id}"] = True
-        
-        # タグ編集モーダル
-        if st.session_state.get(f"editing_tags_{session_id}", False):
+            
             st.markdown("---")
-            st.subheader("🏷️ タグ編集")
             
             # 既存タグの削除UI
             if tags:
-                st.markdown("**現在のタグ:**")
+                st.markdown("**タグを削除:**")
                 cols = st.columns(len(tags))
                 for idx, tag in enumerate(tags):
                     with cols[idx]:
@@ -341,11 +405,6 @@ def render_session_detail(session_id: int):
                             st.rerun()
                         else:
                             st.error("タグの追加に失敗しました")
-            
-            # 閉じるボタン
-            if st.button("✅ 完了", key=f"close_edit_tags_{session_id}"):
-                st.session_state[f"editing_tags_{session_id}"] = False
-                st.rerun()
         
         st.divider()
         
@@ -458,6 +517,10 @@ def main():
     # Initialize History Mode (SessionManager only, no ChatManager)
     initialize_session_history()
     
+    # Initialize date filter enabled state
+    if "date_filter_enabled" not in st.session_state:
+        st.session_state.date_filter_enabled = False
+    
     st.title("📚 履歴閲覧 (History Mode)")
     st.markdown("*過去のセッションを検索・表示します（読み取り専用）*")
     st.markdown("---")
@@ -465,37 +528,32 @@ def main():
     # Sidebar: Read-only display
     render_readonly_sidebar()
     
-    # Main content layout
-    col_filter, col_content = st.columns([1, 2])
+    # Main content layout - Vertical 3-row layout
+    # Row 1: Horizontal filter bar
+    search_query, date_from, date_to, selected_tags = render_horizontal_filters()
     
-    with col_filter:
-        # Unified filters
-        search_query, date_from, date_to, selected_tags = render_unified_filters()
-        
-        st.divider()
-        
-        # Get filtered sessions
-        filtered_sessions = get_filtered_sessions(
-            search_query,
-            date_from,
-            date_to,
-            selected_tags
-        )
-        
-        # Session selector
-        selected_session_id = render_session_selector(filtered_sessions)
-        
-        # Calendar visualization (optional)
-        if filtered_sessions and (date_from or date_to):
-            st.divider()
-            render_calendar_visualization(filtered_sessions)
+    st.divider()
     
-    with col_content:
-        if selected_session_id:
-            # Render session detail with tag editing
-            render_session_detail(selected_session_id)
-        else:
-            st.info("左のフィルタからセッションを選択してください")
+    # Row 2: Compact session list
+    # Get filtered sessions
+    filtered_sessions = get_filtered_sessions(
+        search_query,
+        date_from,
+        date_to,
+        selected_tags
+    )
+    
+    # Session selector (compact)
+    selected_session_id = render_compact_session_list(filtered_sessions)
+    
+    st.divider()
+    
+    # Row 3: Full-width session details
+    if selected_session_id:
+        # Render session detail with tag editing
+        render_session_detail(selected_session_id)
+    else:
+        st.info("上のリストからセッションを選択してください")
 
 
 if __name__ == "__main__":
