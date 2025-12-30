@@ -52,9 +52,21 @@ Track these steps as TODOs and complete them one by one.
 2. **Read design.md** (if exists) - Review technical decisions
 3. **Read tasks.md** - Get implementation checklist
 4. **Implement tasks sequentially** - Complete in order
-5. **Confirm completion** - Ensure every item in `tasks.md` is finished before updating statuses
-6. **Update checklist** - After all work is done, set every task to `- [x]` so the list reflects reality
-7. **Approval gate** - Do not start implementation until the proposal is reviewed and approved
+5. **Execute E2E Tests** - **MANDATORY**: Run UI-inclusive end-to-end tests to verify all functionality works as intended
+6. **Fix Detected Issues** - **MANDATORY**: Resolve all test failures and UI issues before proceeding
+7. **Confirm completion** - Ensure every item in `tasks.md` is finished and all tests pass before updating statuses
+8. **Update checklist** - After all work is done and tests pass, set every task to `- [x]` so the list reflects reality
+9. **Approval gate** - Do not start implementation until the proposal is reviewed and approved
+
+**CRITICAL VALIDATION REQUIREMENT:**
+All changes MUST include comprehensive UI validation:
+- Execute relevant E2E tests (Playwright, manual UI testing, etc.)
+- Verify all user-facing functionality works correctly
+- Fix any UI issues, broken workflows, or test failures
+- Document test results in tasks.md or proposal.md
+- Changes are NOT complete until all UI tests pass
+
+**This is a non-negotiable requirement for all proposals.**
 
 ### Stage 3: Archiving Changes
 After deployment, create separate PR to:
@@ -201,7 +213,16 @@ If multiple capabilities are affected, create multiple delta files under `change
 - [ ] 1.1 Create database schema
 - [ ] 1.2 Implement API endpoint
 - [ ] 1.3 Add frontend component
-- [ ] 1.4 Write tests
+- [ ] 1.4 Write unit tests
+
+## 2. UI Validation (MANDATORY)
+- [ ] 2.1 Execute E2E tests (Playwright/manual)
+- [ ] 2.2 Verify all UI functionality works correctly
+- [ ] 2.3 Fix any detected UI issues or test failures
+- [ ] 2.4 Document test results
+
+**NOTE**: Implementation is NOT complete until all UI tests pass.
+This is a mandatory step for every change proposal.
 ```
 
 5. **Create design.md when needed:**

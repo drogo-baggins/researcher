@@ -229,3 +229,39 @@ ChatManager (orchestrator)
 - `~/.researcher/sessions.db`: SQLite conversation history
 - `~/.researcher/feedback.json`: User feedback data
 - `~/.researcher/blacklist.json`: URL blacklist
+
+## Quality Assurance Requirements
+
+**MANDATORY UI VALIDATION:**
+
+**All code changes that affect user-facing functionality MUST include comprehensive UI validation before being considered complete. This is a non-negotiable requirement.**
+
+**Required validation steps:**
+1. **E2E Testing**: Execute Playwright tests or equivalent automated UI tests
+2. **Manual Testing**: Verify all affected UI components work correctly
+3. **Issue Resolution**: Fix ALL detected UI problems, broken workflows, or test failures
+4. **Documentation**: Record test results in proposal tasks.md or relevant documentation
+
+**When UI validation is required:**
+- Any change to Streamlit pages (`src/researcher/pages/`)
+- Changes to UI utilities (`src/researcher/utils/page_utils.py`)
+- Configuration changes affecting UI behavior
+- New features with user-facing components
+- Bug fixes for UI issues
+
+**Validation checklist:**
+- [ ] Streamlit app starts without errors
+- [ ] All pages are accessible and render correctly
+- [ ] User workflows complete successfully
+- [ ] Error messages display appropriately
+- [ ] Settings changes take effect
+- [ ] E2E tests pass
+- [ ] No console errors or warnings
+
+**Implementation is NOT complete until:**
+- All E2E tests pass
+- Manual testing confirms no UI issues
+- All detected problems are resolved
+- Test results are documented
+
+**This requirement applies to all OpenSpec change proposals affecting UI.**
