@@ -71,13 +71,13 @@ def test_save_and_load_exchanges(session_manager):
     
     # Save first exchange
     exchange1_id = session_manager.save_exchange(
-        session_id, "Hello", "Hi there!", "gpt-oss:20b", "ja"
+        session_id, "Hello", "Hi there!", "test-model", "ja"
     )
     assert exchange1_id is not None
     
     # Save second exchange
     exchange2_id = session_manager.save_exchange(
-        session_id, "How are you?", "I'm doing well!", "gpt-oss:20b", "ja"
+        session_id, "How are you?", "I'm doing well!", "test-model", "ja"
     )
     assert exchange2_id is not None
     
@@ -94,9 +94,9 @@ def test_exchanges_ordered_by_created_at(session_manager):
     session_id = session_manager.create_session("Test")
     
     # Save three exchanges
-    session_manager.save_exchange(session_id, "Q1", "A1", "gpt-oss:20b", "ja")
-    session_manager.save_exchange(session_id, "Q2", "A2", "gpt-oss:20b", "ja")
-    session_manager.save_exchange(session_id, "Q3", "A3", "gpt-oss:20b", "ja")
+    session_manager.save_exchange(session_id, "Q1", "A1", "test-model", "ja")
+    session_manager.save_exchange(session_id, "Q2", "A2", "test-model", "ja")
+    session_manager.save_exchange(session_id, "Q3", "A3", "test-model", "ja")
     
     # Load and verify order
     loaded = session_manager.load_session(session_id)
@@ -118,7 +118,7 @@ def test_list_sessions_ordered_by_updated_at(session_manager):
     
     # Add exchange to id1 to make it most recent
     time.sleep(0.01)
-    session_manager.save_exchange(id1, "Q", "A", "gpt-oss:20b", "ja")
+    session_manager.save_exchange(id1, "Q", "A", "test-model", "ja")
     
     # List sessions
     sessions = session_manager.list_sessions()
@@ -133,7 +133,7 @@ def test_delete_session(session_manager):
     session_id = session_manager.create_session("To Delete")
     
     # Add exchange
-    session_manager.save_exchange(session_id, "Q", "A", "gpt-oss:20b", "ja")
+    session_manager.save_exchange(session_id, "Q", "A", "test-model", "ja")
     
     # Verify it exists
     loaded = session_manager.load_session(session_id)
@@ -153,7 +153,7 @@ def test_foreign_key_constraint_blocks_invalid_session_id(session_manager):
     """Test that foreign key constraint blocks exchanges with invalid session_id."""
     # Attempt to save exchange with non-existent session_id
     exchange_id = session_manager.save_exchange(
-        99999, "Q", "A", "gpt-oss:20b", "ja"
+        99999, "Q", "A", "test-model", "ja"
     )
     
     # Should fail (return None)
@@ -176,7 +176,7 @@ def test_search_sessions_by_exchange_content(session_manager):
     session_id = session_manager.create_session("Test Session")
     session_manager.save_exchange(
         session_id, "Tell me about machine learning", 
-        "Machine learning is...", "gpt-oss:20b", "ja"
+        "Machine learning is...", "test-model", "ja"
     )
     
     results = session_manager.search_sessions("machine learning")
@@ -266,9 +266,9 @@ def test_list_sessions_returns_exchange_count(session_manager):
     id1 = session_manager.create_session("S1")
     id2 = session_manager.create_session("S2")
     
-    session_manager.save_exchange(id1, "Q1", "A1", "gpt-oss:20b", "ja")
-    session_manager.save_exchange(id1, "Q2", "A2", "gpt-oss:20b", "ja")
-    session_manager.save_exchange(id2, "Q1", "A1", "gpt-oss:20b", "ja")
+    session_manager.save_exchange(id1, "Q1", "A1", "test-model", "ja")
+    session_manager.save_exchange(id1, "Q2", "A2", "test-model", "ja")
+    session_manager.save_exchange(id2, "Q1", "A1", "test-model", "ja")
     
     sessions = session_manager.list_sessions()
     session1 = next(s for s in sessions if s["id"] == id1)
@@ -288,7 +288,7 @@ def test_save_exchange_with_search_results(session_manager):
     search_results = [{"title": "Python Tutorial", "url": "https://example.com"}]
     
     exchange_id = session_manager.save_exchange(
-        session_id, "Q", "A", "gpt-oss:20b", "ja", search_results=search_results
+        session_id, "Q", "A", "test-model", "ja", search_results=search_results
     )
     assert exchange_id is not None
     
@@ -302,7 +302,7 @@ def test_save_exchange_with_evaluation_score(session_manager):
     eval_score = {"accuracy": 0.9, "overall": 0.875}
     
     exchange_id = session_manager.save_exchange(
-        session_id, "Q", "A", "gpt-oss:20b", "ja", evaluation_score=eval_score
+        session_id, "Q", "A", "test-model", "ja", evaluation_score=eval_score
     )
     assert exchange_id is not None
     
@@ -318,7 +318,7 @@ def test_save_exchange_updates_session_timestamp(session_manager):
     timestamp1 = loaded1["updated_at"]
     
     time.sleep(0.1)
-    session_manager.save_exchange(session_id, "Q", "A", "gpt-oss:20b", "ja")
+    session_manager.save_exchange(session_id, "Q", "A", "test-model", "ja")
     
     loaded2 = session_manager.load_session(session_id)
     timestamp2 = loaded2["updated_at"]

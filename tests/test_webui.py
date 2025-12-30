@@ -78,7 +78,7 @@ def test_render_chat_displays_embedded_evaluation(monkeypatch):
     mock_session_state.chat_manager = Mock()
     mock_session_state.session_manager = Mock()
     mock_session_state.current_session_id = 1
-    mock_session_state.model = "gpt-oss:20b"
+    mock_session_state.model = "test-model"
     mock_session_state.language = "ja"
     mock_session_state.get = Mock(return_value=None)
     mock_session_state.__setitem__ = Mock()
@@ -119,7 +119,7 @@ def test_render_chat_uses_fallback_evaluation(monkeypatch):
     mock_session_state.chat_manager = mock_cm
     mock_session_state.session_manager = Mock()
     mock_session_state.current_session_id = 1
-    mock_session_state.model = "gpt-oss:20b"
+    mock_session_state.model = "test-model"
     mock_session_state.language = "ja"
     mock_session_state.get = Mock(return_value=None)
     mock_session_state.__setitem__ = Mock()
@@ -151,8 +151,8 @@ def test_render_minimal_sidebar_shows_model_selector(monkeypatch):
     
     mock_session_state = Mock()
     mock_session_state.get = Mock(side_effect=lambda key, default=None: {
-        "available_models": ["gpt-oss:20b", "llama2:7b"],
-        "model": "gpt-oss:20b",
+        "available_models": ["test-model", "test-model-2"],
+        "model": "test-model",
         "language": "ja",
         "auto_search_enabled": False
     }.get(key, default))
@@ -167,7 +167,7 @@ def test_render_minimal_sidebar_shows_model_selector(monkeypatch):
     mock_st.sidebar = MagicMock()
     mock_st.title = Mock()
     mock_st.subheader = Mock()
-    mock_st.selectbox = Mock(return_value="gpt-oss:20b")
+    mock_st.selectbox = Mock(return_value="test-model")
     mock_st.checkbox = Mock(return_value=False)
     mock_st.divider = Mock()
     mock_st.metric = Mock()
@@ -186,8 +186,8 @@ def test_render_minimal_sidebar_shows_connection_status(monkeypatch):
     
     mock_session_state = Mock()
     mock_session_state.get = Mock(side_effect=lambda key, default=None: {
-        "available_models": ["gpt-oss:20b"],
-        "model": "gpt-oss:20b",
+        "available_models": ["test-model"],
+        "model": "test-model",
         "language": "ja"
     }.get(key, default))
     mock_session_state.__setitem__ = Mock()
@@ -201,7 +201,7 @@ def test_render_minimal_sidebar_shows_connection_status(monkeypatch):
     mock_st.sidebar = MagicMock()
     mock_st.title = Mock()
     mock_st.subheader = Mock()
-    mock_st.selectbox = Mock(return_value="gpt-oss:20b")
+    mock_st.selectbox = Mock(return_value="test-model")
     mock_st.checkbox = Mock(return_value=False)
     mock_st.divider = Mock()
     mock_st.metric = Mock()
@@ -230,7 +230,7 @@ def test_render_feedback_buttons_saves_upvote(monkeypatch):
     
     mock_session_state = Mock()
     mock_cm = Mock()
-    mock_cm.get_current_model.return_value = "gpt-oss:20b"
+    mock_cm.get_current_model.return_value = "test-model"
     mock_session_state.chat_manager = mock_cm
     mock_session_state.current_session_id = 1
     
@@ -242,7 +242,7 @@ def test_render_feedback_buttons_saves_upvote(monkeypatch):
     chat_module.render_feedback_buttons(0, "Question", "Answer")
     
     # Verify save was called with "up"
-    mock_save_feedback.assert_called_once_with("Question", "Answer", "up", "gpt-oss:20b", 1)
+    mock_save_feedback.assert_called_once_with("Question", "Answer", "up", "test-model", 1)
     mock_st.success.assert_called_once()
 
 
@@ -256,7 +256,7 @@ def test_render_feedback_buttons_saves_downvote(monkeypatch):
     
     mock_session_state = Mock()
     mock_cm = Mock()
-    mock_cm.get_current_model.return_value = "llama2:7b"
+    mock_cm.get_current_model.return_value = "test-model-2"
     mock_session_state.chat_manager = mock_cm
     mock_session_state.current_session_id = 2
     
@@ -268,7 +268,7 @@ def test_render_feedback_buttons_saves_downvote(monkeypatch):
     chat_module.render_feedback_buttons(1, "Q", "A")
     
     # Verify save was called with "down"
-    mock_save_feedback.assert_called_once_with("Q", "A", "down", "llama2:7b", 2)
+    mock_save_feedback.assert_called_once_with("Q", "A", "down", "test-model-2", 2)
     mock_st.success.assert_called_once()
 
 
@@ -346,7 +346,7 @@ def test_load_session_helper_triggers_rerun(monkeypatch):
     mock_session_manager = Mock()
     mock_session_manager.load_session.return_value = {
         "messages": [{"role": "user", "content": "Loaded"}],
-        "model": "gpt-oss:20b",
+        "model": "test-model",
         "search_results": []
     }
     
@@ -377,7 +377,7 @@ def test_load_session_helper_no_rerun_when_disabled(monkeypatch):
     mock_session_manager = Mock()
     mock_session_manager.load_session.return_value = {
         "messages": [],
-        "model": "gpt-oss:20b",
+        "model": "test-model",
         "search_results": []
     }
     
@@ -454,7 +454,7 @@ def test_load_session_helper_deepcopy_failure(monkeypatch):
             {
                 "user_message": "Test",
                 "assistant_message": "Response",
-                "model": "gpt-oss:20b",
+                "model": "test-model",
                 "language": "ja",
                 "search_results": None,
                 "evaluation_score": None
@@ -468,10 +468,10 @@ def test_load_session_helper_deepcopy_failure(monkeypatch):
     mock_cm.messages = []
     mock_cm.language = "ja"
     mock_cm.ollama_client = Mock()
-    mock_cm.ollama_client.model = "gpt-oss:20b"
+    mock_cm.ollama_client.model = "test-model"
     mock_cm.reranker = Mock()
     mock_cm.reranker.ollama_client = Mock()
-    mock_cm.reranker.ollama_client.model = "gpt-oss:20b"
+    mock_cm.reranker.ollama_client.model = "test-model"
     mock_cm.agent = None
     
     mock_session_state = Mock()
@@ -504,7 +504,7 @@ def test_load_session_helper_old_session_format(monkeypatch):
             {
                 "user_message": "Old session",
                 "assistant_message": "Response",
-                "model": "gpt-oss:20b",
+                "model": "test-model",
                 "language": "ja",
                 "search_results": None,
                 "evaluation_score": None
@@ -518,10 +518,10 @@ def test_load_session_helper_old_session_format(monkeypatch):
     mock_cm.messages = []
     mock_cm.language = "ja"
     mock_cm.ollama_client = Mock()
-    mock_cm.ollama_client.model = "gpt-oss:20b"
+    mock_cm.ollama_client.model = "test-model"
     mock_cm.reranker = Mock()
     mock_cm.reranker.ollama_client = Mock()
-    mock_cm.reranker.ollama_client.model = "gpt-oss:20b"
+    mock_cm.reranker.ollama_client.model = "test-model"
     mock_cm.agent = None
     
     mock_session_state = Mock()
@@ -556,7 +556,7 @@ def test_load_session_helper_trace_logging(monkeypatch, caplog):
             {
                 "user_message": "Test",
                 "assistant_message": "Response",
-                "model": "gpt-oss:20b",
+                "model": "test-model",
                 "language": "ja",
                 "search_results": [{"title": "Test result"}],
                 "evaluation_score": None
@@ -570,10 +570,10 @@ def test_load_session_helper_trace_logging(monkeypatch, caplog):
     mock_cm.messages = []
     mock_cm.language = "ja"
     mock_cm.ollama_client = Mock()
-    mock_cm.ollama_client.model = "gpt-oss:20b"
+    mock_cm.ollama_client.model = "test-model"
     mock_cm.reranker = Mock()
     mock_cm.reranker.ollama_client = Mock()
-    mock_cm.reranker.ollama_client.model = "gpt-oss:20b"
+    mock_cm.reranker.ollama_client.model = "test-model"
     mock_cm.agent = None
     
     mock_session_state = Mock()
@@ -612,7 +612,7 @@ def test_load_session_helper_extract_failure_dumps_session_data(monkeypatch, cap
     mock_session_manager = Mock()
     mock_session_manager.load_session.return_value = {
         "history": "invalid_not_a_list",  # This should cause an error
-        "model": "gpt-oss:20b"
+        "model": "test-model"
     }
     
     mock_cm = Mock()

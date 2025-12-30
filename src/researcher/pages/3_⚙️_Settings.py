@@ -54,9 +54,9 @@ def render_llm_settings(settings, available_models):
     # Current settings info
     st.info(f"""
     **現在の設定**:
-    - 検索語生成: {settings.get('search_model', 'llama3.2')}
-    - 回答生成: {settings.get('response_model', 'llama3')}
-    - 品質検証: {settings.get('eval_model', 'llama3.2:3b')}
+    - 検索語生成: {settings.get('search_model') or '(未設定)'}
+    - 回答生成: {settings.get('response_model') or '(未設定)'}
+    - 品質検証: {settings.get('eval_model') or '(未設定)'}
     """)
     
     # Build model options (include current settings for backward compatibility)
@@ -71,16 +71,23 @@ def render_llm_settings(settings, available_models):
     
     # If no models available, use current settings as options
     if not model_options:
-        model_options = [
-            settings.get('search_model', 'llama3.2'),
-            settings.get('response_model', 'llama3'),
-            settings.get('eval_model', 'llama3.2:3b')
-        ]
-        model_options = sorted(set(model_options))
+        # Collect non-empty settings
+        for key in ['search_model', 'response_model', 'eval_model']:
+            val = settings.get(key)
+            if val:
+                model_options.append(val)
+        if model_options:
+            model_options = sorted(set(model_options))
+        else:
+            st.warning("⚠️ Ollamaサーバーに接続できません。モデル名を直接入力してください。")
+            # 空のリストでもUIを表示するため、デフォルトのプレースホルダーを追加
+            model_options = ["(モデルを入力)"]
     
     # Search model selectbox
-    search_model_default = settings.get('search_model', 'llama3.2')
-    search_model_index = model_options.index(search_model_default) if search_model_default in model_options else 0
+    search_model_default = settings.get('search_model')
+    if not search_model_default and model_options:
+        search_model_default = model_options[0]
+    search_model_index = model_options.index(search_model_default) if (search_model_default and search_model_default in model_options) else 0
     
     selected_search_model = st.selectbox(
         "検索語生成モデル",
@@ -91,8 +98,10 @@ def render_llm_settings(settings, available_models):
     )
     
     # Response model selectbox
-    response_model_default = settings.get('response_model', 'llama3')
-    response_model_index = model_options.index(response_model_default) if response_model_default in model_options else 0
+    response_model_default = settings.get('response_model')
+    if not response_model_default and model_options:
+        response_model_default = model_options[0]
+    response_model_index = model_options.index(response_model_default) if (response_model_default and response_model_default in model_options) else 0
     
     selected_response_model = st.selectbox(
         "回答生成モデル",
@@ -103,8 +112,10 @@ def render_llm_settings(settings, available_models):
     )
     
     # Evaluation model selectbox
-    eval_model_default = settings.get('eval_model', 'llama3.2:3b')
-    eval_model_index = model_options.index(eval_model_default) if eval_model_default in model_options else 0
+    eval_model_default = settings.get('eval_model')
+    if not eval_model_default and model_options:
+        eval_model_default = model_options[0]
+    eval_model_index = model_options.index(eval_model_default) if (eval_model_default and eval_model_default in model_options) else 0
     
     selected_eval_model = st.selectbox(
         "品質検証モデル",
@@ -127,6 +138,48 @@ def render_llm_settings(settings, available_models):
         'search_model': selected_search_model,
         'response_model': selected_response_model,
         'eval_model': selected_eval_model
+    }
+
+
+def render_ui_settings(settings):
+    """Render UI appearance configuration section
+    
+    Args:
+        settings: Current settings dictionary
+    
+    Returns:
+        Dictionary with selected UI values
+    """
+    st.subheader("🎨 UI設定")
+    
+    # Current settings info
+    st.info(f"""
+    **現在の設定**:
+    - 文字サイズ: {settings.get('ui_text_size', 'medium')}
+    """)
+    
+    # Text size selectbox
+    size_options = ["small", "medium", "large"]
+    size_labels = {
+        "small": "小 (0.9倍)",
+        "medium": "中 (標準)",
+        "large": "大 (1.1倍)"
+    }
+    
+    current_size = settings.get('ui_text_size', 'medium')
+    size_index = size_options.index(current_size) if current_size in size_options else 1
+    
+    selected_size = st.selectbox(
+        "文字サイズ",
+        options=size_options,
+        index=size_index,
+        format_func=lambda x: size_labels[x],
+        help="全ページの文字サイズを変更します",
+        key="ui_text_size_select"
+    )
+    
+    return {
+        'ui_text_size': selected_size
     }
 
 
@@ -222,6 +275,16 @@ def main():
         layout="wide"
     )
     
+    # Apply text size CSS from settings
+    from researcher.utils.page_utils import apply_text_size_css
+    
+    # Load settings for CSS application
+    if "settings" not in st.session_state:
+        st.session_state.settings = load_settings()
+    
+    text_size = st.session_state.settings.get('ui_text_size', 'medium')
+    apply_text_size_css(text_size)
+    
     # Render sidebar
     render_sidebar()
     
@@ -250,6 +313,11 @@ def main():
     
     # Render SearXNG settings section
     searxng_selections = render_searxng_settings(settings)
+    
+    st.divider()
+    
+    # Render UI settings section
+    ui_selections = render_ui_settings(settings)
     
     st.divider()
     
@@ -284,7 +352,8 @@ def main():
                 'eval_model': llm_selections['eval_model'],
                 'searxng_engine': searxng_selections['searxng_engine'],
                 'searxng_lang': searxng_selections['searxng_lang'],
-                'searxng_safesearch': searxng_selections['searxng_safesearch']
+                'searxng_safesearch': searxng_selections['searxng_safesearch'],
+                'ui_text_size': ui_selections['ui_text_size']
             }
             
             # Save settings

@@ -168,7 +168,7 @@ def test_save_feedback_includes_model():
                 query="Test query",
                 response="Test response",
                 rating="up",
-                model="gpt-oss:20b",
+                model="test-model",
                 session_id=1
             )
             
@@ -180,7 +180,7 @@ def test_save_feedback_includes_model():
                 records = json.load(f)
             
             assert len(records) == 1
-            assert records[0]["model"] == "gpt-oss:20b"
+            assert records[0]["model"] == "test-model"
             assert records[0]["query"] == "Test query"
             assert records[0]["response"] == "Test response"
             assert records[0]["rating"] == "up"
@@ -198,11 +198,11 @@ def test_feedback_stats_model_filter():
         
         with patch("researcher.config.FEEDBACK_FILE_PATH", feedback_path):
             # Save multiple feedback records with different models
-            save_feedback("q1", "r1", "down", "gpt-oss:20b")
-            save_feedback("q2", "r2", "down", "gpt-oss:20b")
-            save_feedback("q3", "r3", "up", "gpt-oss:20b")
-            save_feedback("q4", "r4", "down", "llama3.2")
-            save_feedback("q5", "r5", "up", "llama3.2")
+            save_feedback("q1", "r1", "down", "test-model")
+            save_feedback("q2", "r2", "down", "test-model")
+            save_feedback("q3", "r3", "up", "test-model")
+            save_feedback("q4", "r4", "down", "test-search-model")
+            save_feedback("q5", "r5", "up", "test-search-model")
             
             # Get overall stats
             overall_stats = get_feedback_stats()
@@ -211,16 +211,16 @@ def test_feedback_stats_model_filter():
             assert overall_stats["thumbs_down_rate"] == 0.6
             
             # Get model-specific stats
-            gpt_oss_stats = get_feedback_stats(model_filter="gpt-oss:20b")
+            gpt_oss_stats = get_feedback_stats(model_filter="test-model")
             assert gpt_oss_stats["total_count"] == 3
             assert gpt_oss_stats["thumbs_down_count"] == 2
             assert gpt_oss_stats["thumbs_down_rate"] == 2/3
-            assert gpt_oss_stats.get("model_filter") == "gpt-oss:20b"
+            assert gpt_oss_stats.get("model_filter") == "test-model"
             
             # Check by_model in response contains both models
             assert "by_model" in gpt_oss_stats
-            assert "gpt-oss:20b" in gpt_oss_stats["by_model"]
-            assert "llama3.2" in gpt_oss_stats["by_model"]
+            assert "test-model" in gpt_oss_stats["by_model"]
+            assert "test-search-model" in gpt_oss_stats["by_model"]
 
 
 def test_load_feedback_history_handles_missing_model():
@@ -238,7 +238,7 @@ def test_load_feedback_history_handles_missing_model():
                 "query": "q1",
                 "response": "r1",
                 "rating": "up",
-                "model": "gpt-oss:20b"
+                "model": "test-model"
             },
             {
                 "timestamp": "2025-01-01T09:00:00",
@@ -255,7 +255,7 @@ def test_load_feedback_history_handles_missing_model():
         with patch("researcher.config.FEEDBACK_FILE_PATH", feedback_path):
             loaded = load_feedback_history()
             assert len(loaded) == 2
-            assert loaded[0]["model"] == "gpt-oss:20b"
+            assert loaded[0]["model"] == "test-model"
             assert loaded[1]["model"] == "unknown"  # Should be set to "unknown"
 
 
@@ -264,9 +264,9 @@ def test_load_settings_default():
     with patch("researcher.config.SETTINGS_FILE_PATH", Path("/nonexistent/path/settings.json")):
         result = load_settings()
         assert result == DEFAULT_SETTINGS
-        assert result["search_model"] == "llama3.2"
-        assert result["response_model"] == "llama3"
-        assert result["eval_model"] == "llama3.2:3b"
+        assert result["search_model"] == "test-search-model"
+        assert result["response_model"] == "test-response-model"
+        assert result["eval_model"] == "test-eval-model"
         assert result["searxng_engine"] == "general"
         assert result["searxng_lang"] == "ja"
         assert result["searxng_safesearch"] == "off"
@@ -277,9 +277,9 @@ def test_load_settings_valid():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         import json
         custom_settings = {
-            "search_model": "llama3.3",
-            "response_model": "llama3.1",
-            "eval_model": "llama3.2:1b",
+            "search_model": "test-search-model-v2",
+            "response_model": "test-response-model-v2",
+            "eval_model": "test-eval-model-small",
             "searxng_engine": "news",
             "searxng_lang": "en",
             "searxng_safesearch": "strict"
@@ -290,9 +290,9 @@ def test_load_settings_valid():
     try:
         with patch("researcher.config.SETTINGS_FILE_PATH", Path(temp_path)):
             result = load_settings()
-            assert result["search_model"] == "llama3.3"
-            assert result["response_model"] == "llama3.1"
-            assert result["eval_model"] == "llama3.2:1b"
+            assert result["search_model"] == "test-search-model-v2"
+            assert result["response_model"] == "test-response-model-v2"
+            assert result["eval_model"] == "test-eval-model-small"
             assert result["searxng_engine"] == "news"
             assert result["searxng_lang"] == "en"
             assert result["searxng_safesearch"] == "strict"
@@ -315,8 +315,8 @@ def test_load_settings_partial():
         with patch("researcher.config.SETTINGS_FILE_PATH", Path(temp_path)):
             result = load_settings()
             assert result["search_model"] == "custom-model"  # Custom value
-            assert result["response_model"] == "llama3"  # Default value
-            assert result["eval_model"] == "llama3.2:3b"  # Default value
+            assert result["response_model"] == "test-response-model"  # Default value
+            assert result["eval_model"] == "test-eval-model"  # Default value
     finally:
         Path(temp_path).unlink()
 
@@ -341,9 +341,9 @@ def test_save_settings():
         temp_path = Path(tmpdir) / "settings.json"
         with patch("researcher.config.SETTINGS_FILE_PATH", temp_path):
             custom_settings = {
-                "search_model": "llama3.3",
-                "response_model": "llama3.1",
-                "eval_model": "llama3.2:1b",
+                "search_model": "test-search-model-v2",
+                "response_model": "test-response-model-v2",
+                "eval_model": "test-eval-model-small",
                 "searxng_engine": "news",
                 "searxng_lang": "en",
                 "searxng_safesearch": "strict"

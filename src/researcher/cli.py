@@ -119,7 +119,7 @@ def display_search_results_table(search_results: list, language: str = "ja") -> 
 
 def main():
     parser = argparse.ArgumentParser(description="OllamaローカルLLM CLIチャット")
-    parser.add_argument("--model", default=None, help="使用するモデル名 (デフォルト: 環境変数OLLAMA_MODELまたはgpt-oss:20b)")
+    parser.add_argument("--model", default=None, help="使用するモデル名 (デフォルト: 環境変数OLLAMA_MODELまたは設定ファイル)")
     parser.add_argument("--stream", action="store_true", help="ストリーミングモードで応答")
     parser.add_argument("--no-stream", action="store_true", help="ストリーミングモードを無効化（出力を一度に返す）")
     parser.add_argument(
@@ -181,9 +181,11 @@ def main():
     )
     args = parser.parse_args()
 
-    # モデル名の解決（CLI引数 > 環境変数 > デフォルト）
+    # モデル名の解決（CLI引数 > 環境変数 > 設定ファイル）
     if args.model is None:
-        args.model = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b")
+        from researcher.config import load_settings
+        settings = load_settings()
+        args.model = os.environ.get("OLLAMA_MODEL") or settings.get("response_model")
 
     # ===========================================================================
     # サービスの自動起動と初期化

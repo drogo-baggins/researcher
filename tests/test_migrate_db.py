@@ -83,7 +83,7 @@ def test_v0_to_v1_migration_with_existing_legacy_data(temp_migration_db):
         ])
         conn.execute(
             "INSERT INTO sessions (name, history, model, language) VALUES (?, ?, ?, ?)",
-            ("Test Session", history, "gpt-oss:20b", "ja")
+            ("Test Session", history, "test-model", "ja")
         )
         conn.commit()
     
@@ -164,7 +164,7 @@ def test_v1_to_v2_migration_with_sample_data(temp_migration_db):
         conn.execute(
             """INSERT INTO sessions (name, history, model, language, group_id, search_results, last_evaluation_score, tags)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("Test Session", history, "gpt-oss:20b", "ja", 1, search_results, eval_score, tags)
+            ("Test Session", history, "test-model", "ja", 1, search_results, eval_score, tags)
         )
         
         # V1としてマーク
@@ -225,7 +225,7 @@ def test_v1_to_v2_migration_with_sample_data(temp_migration_db):
         user_msg, asst_msg, model, lang, sr_json, eval_json = cursor.fetchone()
         assert user_msg == "こんにちは"
         assert asst_msg == "はい、こんにちは！"
-        assert model == "gpt-oss:20b"
+        assert model == "test-model"
         assert lang == "ja"
         assert json.loads(sr_json) == [{"title": "Test", "url": "https://example.com"}]
         assert json.loads(eval_json) == {"accuracy": 0.9}
@@ -268,7 +268,7 @@ def test_v1_to_v2_migration_with_multiple_exchanges(temp_migration_db):
         
         conn.execute(
             "INSERT INTO sessions (name, history, model, language, group_id, tags) VALUES (?, ?, ?, ?, ?, ?)",
-            ("Multi Exchange Session", history, "gpt-oss:20b", "ja", 1, json.dumps(["test"]))
+            ("Multi Exchange Session", history, "test-model", "ja", 1, json.dumps(["test"]))
         )
         conn.execute("INSERT INTO schema_version (version, description) VALUES (1, 'V1')")
         conn.commit()
@@ -325,7 +325,7 @@ def test_v1_to_v2_migration_with_incomplete_exchanges(temp_migration_db):
         
         conn.execute(
             "INSERT INTO sessions (name, history, model, language, group_id, tags) VALUES (?, ?, ?, ?, ?, ?)",
-            ("Incomplete Session", history, "gpt-oss:20b", "ja", 1, "[]")
+            ("Incomplete Session", history, "test-model", "ja", 1, "[]")
         )
         conn.execute("INSERT INTO schema_version (version, description) VALUES (1, 'V1')")
         conn.commit()
@@ -367,7 +367,7 @@ def test_v0_to_v2_direct_migration(temp_migration_db):
         
         conn.execute(
             "INSERT INTO sessions (name, history, model, language) VALUES (?, ?, ?, ?)",
-            ("Legacy Session", history, "gpt-oss:20b", "en")
+            ("Legacy Session", history, "test-model", "en")
         )
         conn.commit()
     
@@ -476,7 +476,7 @@ def test_migration_with_malformed_tags_json(temp_migration_db):
         # 不正なJSON
         conn.execute(
             "INSERT INTO sessions (name, history, model, language, group_id, tags) VALUES (?, ?, ?, ?, ?, ?)",
-            ("Bad Tags Session", history, "gpt-oss:20b", "ja", 1, "invalid json")
+            ("Bad Tags Session", history, "test-model", "ja", 1, "invalid json")
         )
         conn.execute("INSERT INTO schema_version (version, description) VALUES (1, 'V1')")
         conn.commit()
@@ -519,7 +519,7 @@ def test_migration_with_empty_history(temp_migration_db):
         
         conn.execute(
             "INSERT INTO sessions (name, history, model, language, group_id, tags) VALUES (?, ?, ?, ?, ?, ?)",
-            ("Empty History Session", json.dumps([]), "gpt-oss:20b", "ja", 1, "[]")
+            ("Empty History Session", json.dumps([]), "test-model", "ja", 1, "[]")
         )
         conn.execute("INSERT INTO schema_version (version, description) VALUES (1, 'V1')")
         conn.commit()
@@ -569,7 +569,7 @@ def test_v2_migration_drop_table_syntax(temp_migration_db):
         history = json.dumps([{"role": "user", "content": "test"}, {"role": "assistant", "content": "response"}])
         conn.execute(
             "INSERT INTO sessions (name, history, model, language, group_id, tags) VALUES (?, ?, ?, ?, ?, ?)",
-            ("Test", history, "gpt-oss:20b", "ja", 1, "[]")
+            ("Test", history, "test-model", "ja", 1, "[]")
         )
         conn.execute("INSERT INTO schema_version (version, description) VALUES (1, 'V1')")
         conn.commit()

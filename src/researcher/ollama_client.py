@@ -9,10 +9,12 @@ LOGGER = logging.getLogger(__name__)
 
 
 class OllamaClient:
-    def __init__(self, model: str = "llama3"):
+    def __init__(self, model: Optional[str] = None):
         self.model = model
 
     def test_connection(self) -> bool:
+        if not self.model:
+            raise ValueError("モデル名が設定されていません。Settingsページでモデルを選択してください。")
         try:
             response = ollama.chat(model=self.model, messages=[{"role": "user", "content": "Hello"}])
             return bool(response and "message" in response)

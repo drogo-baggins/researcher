@@ -154,7 +154,7 @@ def initialize_session_chat():
             st.warning(f"⚠️ SearXNGの起動に失敗しました: {e}")
         
         # Initialize Ollama client
-        model = st.session_state.get("model", "gpt-oss:20b")
+        model = st.session_state.get("model") or st.session_state.settings.get("response_model")
         try:
             ollama_client = OllamaClient(model=model)
             if not ollama_client.test_connection():
@@ -206,7 +206,7 @@ def initialize_session_chat():
             searxng_client = st.session_state.chat_manager.searxng_client
         else:
             # Fallback: Create new clients without connection tests
-            model = st.session_state.get("model", "gpt-oss:20b")
+            model = st.session_state.get("model") or st.session_state.settings.get("response_model")
             ollama_client = OllamaClient(model=model)
             
             searxng_client = None
@@ -222,9 +222,9 @@ def initialize_session_chat():
     settings = st.session_state.settings
     
     # Create 3 independent OllamaClient instances for different purposes
-    search_model = settings.get("search_model", "llama3.2")
-    response_model = settings.get("response_model", "llama3")
-    eval_model = settings.get("eval_model", "llama3.2:3b")
+    search_model = settings.get("search_model")
+    response_model = settings.get("response_model")
+    eval_model = settings.get("eval_model")
     
     search_ollama_client = OllamaClient(model=search_model)
     response_ollama_client = OllamaClient(model=response_model)
@@ -401,13 +401,13 @@ def load_session_helper(session_id: int, session_name: str, trigger_rerun: bool 
             
             # Set model/language from first exchange (fallback to defaults)
             if model is None:
-                model = exchange.get("model", "gpt-oss:20b")
+                model = exchange.get("model")
             if language is None:
                 language = exchange.get("language", "ja")
         
         # Fallback to defaults if no exchanges
         if model is None:
-            model = "gpt-oss:20b"
+            model = None  # Will be set by ChatManager
         if language is None:
             language = "ja"
         

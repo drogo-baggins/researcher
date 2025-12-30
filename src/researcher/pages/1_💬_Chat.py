@@ -8,9 +8,9 @@ including automatic search, streaming responses, and feedback collection.
 import logging
 from typing import Any, Dict
 import streamlit as st
-from researcher.config import save_feedback
+from researcher.config import save_feedback, load_settings
 from researcher.agent import QueryAgent
-from researcher.utils.page_utils import initialize_session_chat, load_session_helper, start_new_conversation, get_usage_guide_markdown
+from researcher.utils.page_utils import initialize_session_chat, load_session_helper, start_new_conversation, get_usage_guide_markdown, apply_text_size_css
 
 LOGGER = logging.getLogger(__name__)
 
@@ -478,6 +478,11 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded"
     )
+    
+    # Apply text size CSS from settings
+    settings = load_settings()
+    text_size = settings.get('ui_text_size', 'medium')
+    apply_text_size_css(text_size)
     
     # Initialize session if not already done (idempotent, safe for deep-links)
     initialize_session_chat()

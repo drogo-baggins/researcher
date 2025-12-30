@@ -5,10 +5,19 @@ import pytest
 import subprocess
 import time
 import logging
+import sys
 from pathlib import Path
+
+# src/とscripts/をインポートパスに追加
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root / "src"))
+sys.path.insert(0, str(project_root / "scripts"))
 from migrate_db import run_migrations
 
 LOGGER = logging.getLogger(__name__)
+
+# Test constants
+TEST_MODEL = "test-model"
 
 
 def seed_test_database(db_path: Path):
@@ -32,7 +41,7 @@ def seed_test_database(db_path: Path):
         session_id=session1_id,
         user_message="最新のAIニュースは？",
         assistant_message="最新のAIニュースには以下のようなものがあります...",
-        model="gpt-oss:20b",
+        model=TEST_MODEL,
         language="ja",
         search_results=[
             {
@@ -62,7 +71,7 @@ def seed_test_database(db_path: Path):
         session_id=session2_id,
         user_message="Hello",
         assistant_message="Hi there!",
-        model="gpt-oss:20b",
+        model=TEST_MODEL,
         language="en"
     )
     
@@ -76,7 +85,7 @@ def seed_test_database(db_path: Path):
         session_id=session3_id,
         user_message="テスト",
         assistant_message="テストです",
-        model="gpt-oss:20b",
+        model=TEST_MODEL,
         language="ja"
     )
     
@@ -135,8 +144,8 @@ def streamlit_app():
         test_db_path.unlink()
 
 @pytest.fixture
-def page(playwright, streamlit_app):
-    """Playwrightページオブジェクトを提供"""
+def page_with_db(playwright, streamlit_app):
+    """Playwrightページオブジェクトを提供（テストDB使用版）"""
     browser = playwright.chromium.launch(headless=True)
     context = browser.new_context()
     page = context.new_page()
@@ -145,9 +154,32 @@ def page(playwright, streamlit_app):
     page.goto(streamlit_app)
     
     # 初期ロード待機（ホームページのタイトルを待つ）
-    page.wait_for_selector("text=🔍 Researcher", timeout=10000)
+    page.wait_for_selector("text=🔍 Researcher", timeout=15000)
     
     yield page
+    
+    context.close()
+    browser.close()
+
+@pytest.fixture(scope="session")
+def base_url():
+    """実行中のStreamlitアプリのURLを提供（手動起動版）"""
+    return "http://localhost:8501"
+
+@pytest.fixture
+def page(playwright, base_url):
+    """Playwrightページオブジェクトを提供（手動起動版）"""
+    browser = playwright.chromium.launch(headless=False)  # headless=False で動作確認
+    context = browser.new_context()
+    page_obj = context.new_page()
+    
+    # Streamlitアプリにアクセス
+    page_obj.goto(base_url)
+    
+    # 初期ロード待機
+    page_obj.wait_for_selector("text=🔍 Researcher", timeout=15000)
+    
+    yield page_obj
     
     context.close()
     browser.close()

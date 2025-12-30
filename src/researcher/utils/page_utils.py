@@ -22,9 +22,63 @@ from researcher.config import (
     get_relevance_threshold,
     ensure_ollama_running,
     ensure_searxng_running,
+    load_settings,
 )
 
 LOGGER = logging.getLogger(__name__)
+
+
+def apply_text_size_css(text_size: str = "medium") -> None:
+    """
+    Apply dynamic CSS for text size based on user settings.
+    
+    Args:
+        text_size: Text size setting ("small", "medium", "large")
+    """
+    # Define font size multipliers
+    size_map = {
+        "small": "0.9em",
+        "medium": "1.0em",
+        "large": "1.1em"
+    }
+    
+    font_size = size_map.get(text_size, "1.0em")
+    
+    css = f"""
+    <style>
+    /* Apply text size to main content */
+    .stMarkdown, .stText, p, span, div {{
+        font-size: {font_size} !important;
+    }}
+    
+    /* Apply to chat messages */
+    .stChatMessage {{
+        font-size: {font_size} !important;
+    }}
+    
+    /* Apply to buttons and inputs */
+    .stButton > button, .stTextInput > div > div > input {{
+        font-size: {font_size} !important;
+    }}
+    
+    /* Apply to selectbox and multiselect */
+    .stSelectbox, .stMultiSelect {{
+        font-size: {font_size} !important;
+    }}
+    
+    /* Apply to dataframe/table */
+    .stDataFrame {{
+        font-size: {font_size} !important;
+    }}
+    
+    /* Apply to expander */
+    .streamlit-expanderHeader {{
+        font-size: {font_size} !important;
+    }}
+    </style>
+    """
+    
+    st.markdown(css, unsafe_allow_html=True)
 
 
 def get_usage_guide_markdown() -> str:
@@ -120,6 +174,10 @@ def initialize_session_chat():
         # Already initialized, skip
         return
     
+    # Load settings first
+    if "settings" not in st.session_state:
+        st.session_state.settings = load_settings()
+    
     # Initialize SessionManager for persistence
     if "session_manager" not in st.session_state:
         st.session_state.session_manager = SessionManager()
@@ -150,7 +208,13 @@ def initialize_session_chat():
             st.warning(f"⚠️ SearXNGの起動に失敗しました: {e}")
         
         # Initialize Ollama client
-        model = st.session_state.get("model", "gpt-oss:20b")
+        model = st.session_state.get("model") or st.session_state.settings.get("response_model")
+        if not model:
+            st.error("❌ モデルが設定されていません。")
+            st.info("🔧 Settingsページでモデルを選択してください。")
+            if st.button("⚙️ Settingsページへ"):
+                st.switch_page("pages/3_⚙️_Settings.py")
+            st.stop()
         try:
             ollama_client = OllamaClient(model=model)
             if not ollama_client.test_connection():
@@ -195,7 +259,13 @@ def initialize_session_chat():
             searxng_client = st.session_state.chat_manager.searxng_client
         else:
             # Fallback: Create new clients without connection tests
-            model = st.session_state.get("model", "gpt-oss:20b")
+            model = st.session_state.get("model") or st.session_state.settings.get("response_model")
+            if not model:
+                st.error("❌ モデルが設定されていません。")
+                st.info("🔧 Settingsページでモデルを選択してください。")
+                if st.button("⚙️ Settingsページへ", key="goto_settings_fallback"):
+                    st.switch_page("pages/3_⚙️_Settings.py")
+                st.stop()
             ollama_client = OllamaClient(model=model)
             
             searxng_client = None
@@ -372,15 +442,15 @@ def load_session_helper(session_id: int, session_name: str, trigger_rerun: bool 
             
             messages.append(assistant_msg)
             
-            # Set model/language from first exchange (fallback to defaults)
+            # Set model/language from first exchange
             if model is None:
-                model = exchange.get("model", "gpt-oss:20b")
+                model = exchange.get("model")
             if language is None:
                 language = exchange.get("language", "ja")
         
-        # Fallback to defaults if no exchanges
+        # Fallback to None if no exchanges (ChatManager will handle)
         if model is None:
-            model = "gpt-oss:20b"
+            model = None
         if language is None:
             language = "ja"
         

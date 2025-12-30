@@ -21,6 +21,14 @@ def main():
         initial_sidebar_state="expanded"
     )
     
+    # Apply text size CSS from settings
+    from researcher.config import load_settings
+    from researcher.utils.page_utils import apply_text_size_css
+    
+    settings = load_settings()
+    text_size = settings.get('ui_text_size', 'medium')
+    apply_text_size_css(text_size)
+    
     # Custom CSS for better styling
     st.markdown("""
         <style>

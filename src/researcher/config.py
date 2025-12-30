@@ -55,7 +55,7 @@ def get_evaluation_model(cli_arg: Optional[str] = None) -> Optional[str]:
     """Resolve evaluation model name: CLI > env > None (use response model).
     
     Returns None to use the same model as response generation.
-    Recommended: lightweight accurate model like 'llama3.2:3b' for faster evaluation.
+    Recommended: lightweight accurate model for faster evaluation.
     """
     if cli_arg:
         return cli_arg
@@ -258,12 +258,13 @@ def ensure_searxng_running() -> bool:
 SETTINGS_FILE_PATH = Path.home() / ".researcher" / "settings.json"
 
 DEFAULT_SETTINGS = {
-    "search_model": "llama3.2",
-    "response_model": "llama3",
-    "eval_model": "llama3.2:3b",
+    "search_model": "",
+    "response_model": "",
+    "eval_model": "",
     "searxng_engine": "general",
     "searxng_lang": "ja",
-    "searxng_safesearch": "off"
+    "searxng_safesearch": "off",
+    "ui_text_size": "medium"  # small/medium/large
 }
 
 
@@ -392,7 +393,7 @@ def save_feedback(
         query: User query
         response: LLM response
         rating: "up" or "down" (must be one of these values)
-        model: Model name (e.g., "gpt-oss:20b", must be non-empty)
+        model: Model name (must be non-empty)
         session_id: Optional session ID
     
     Returns:
@@ -494,7 +495,7 @@ def get_feedback_stats(model_filter: Optional[str] = None) -> Dict[str, Any]:
     """Get feedback statistics, optionally filtered by model.
     
     Args:
-        model_filter: Optional model name to filter by (e.g., "gpt-oss:20b")
+        model_filter: Optional model name to filter by
     
     Returns:
         Dict with statistics:

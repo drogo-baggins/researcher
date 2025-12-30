@@ -96,13 +96,16 @@ echo ""
 
 echo "⚙️  環境変数を設定中..."
 
-# デフォルト環境変数を設定
-export OLLAMA_MODEL=${OLLAMA_MODEL:-gpt-oss:20b}
+# デフォルト環境変数を設定（OLLAMA_MODELは設定ファイルから取得）
+if [ -z "$OLLAMA_MODEL" ]; then
+    echo "  • OLLAMA_MODEL: (設定ファイルから取得)"
+else
+    export OLLAMA_MODEL
+    echo "  • OLLAMA_MODEL=$OLLAMA_MODEL"
+fi
 export EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
 export SEARXNG_URL=${SEARXNG_URL:-http://localhost:8888}
 export RELEVANCE_THRESHOLD=${RELEVANCE_THRESHOLD:-0.5}
-
-echo "  • OLLAMA_MODEL=$OLLAMA_MODEL"
 echo "  • EMBEDDING_MODEL=$EMBEDDING_MODEL"
 echo "  • SEARXNG_URL=$SEARXNG_URL"
 
