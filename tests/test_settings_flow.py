@@ -47,7 +47,9 @@ def test_settings_integration_flow():
                 'eval_model': 'llama3.2:3b',    # Unchanged
                 'searxng_engine': 'news',       # Changed
                 'searxng_lang': 'en',           # Changed
-                'searxng_safesearch': 'moderate' # Changed
+                'searxng_safesearch': 'moderate', # Changed
+                'ui_text_size': 'medium',       # Default
+                'llm_providers': [],            # Default
             }
             print(f"  User selected new settings:")
             for key, value in new_settings.items():

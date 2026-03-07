@@ -10,6 +10,7 @@ from researcher.chat_manager import ChatManager
 from researcher.citation_manager import CitationManager
 from researcher.session_manager import SessionManager
 from researcher.config import (
+    build_llm_client,
     ensure_ollama_running,
     ensure_searxng_running,
     get_auto_search_default,
@@ -18,6 +19,7 @@ from researcher.config import (
     get_mcp_servers_config,
     get_relevance_threshold,
     get_searxng_url,
+    parse_model_key,
     save_feedback,
     get_feedback_stats,
 )
@@ -193,15 +195,22 @@ def main():
     
     print("🚀 サービスを初期化中...")
     
-    # Ollamaの自動起動
-    print("  🤖 Ollamaの起動確認中...", end=" ", flush=True)
-    if ensure_ollama_running():
-        print("✓")
-    else:
-        print("✗")
-        print("[ERROR] Ollamaサーバーを起動できません。")
-        print("  手動起動: ollama serve")
-        sys.exit(1)
+    # モデルキーからプロバイダ判定
+    from researcher.config import load_settings as _load_settings
+    _settings_for_cli = _load_settings()
+    _provider_name, _model_id = parse_model_key(args.model or "")
+    _is_ollama = _provider_name is None or _provider_name.lower() == "ollama"
+
+    # Ollamaの自動起動（Ollamaプロバイダの場合のみ）
+    if _is_ollama:
+        print("  🤖 Ollamaの起動確認中...", end=" ", flush=True)
+        if ensure_ollama_running():
+            print("✓")
+        else:
+            print("✗")
+            print("[ERROR] Ollamaサーバーを起動できません。")
+            print("  手動起動: ollama serve")
+            sys.exit(1)
     
     # SearXNGの自動起動
     print("  🔍 SearXNGの起動確認中...", end=" ", flush=True)
@@ -213,16 +222,14 @@ def main():
     
     print()
 
-    client = OllamaClient(model=args.model)
+    client = build_llm_client(args.model, _settings_for_cli)
     try:
         ok = client.test_connection()
         if not ok:
-            print("[ERROR] Ollamaの応答が無効または不完全です。サーバーが起動しているか、モデル名が正しいか確認してください。")
-            print("ヒント: `ollama serve` を実行し、必要なら `ollama pull` でモデルを取得してください。")
+            print("[ERROR] LLMの応答が無効または不完全です。設定を確認してください。")
             sys.exit(1)
     except Exception as e:
-        print(f"[ERROR] Ollamaサーバーに接続できません: {e}")
-        print("Ollamaサーバーを起動してください: `ollama serve`。モデル名も確認してください。")
+        print(f"[ERROR] LLMクライアント接続エラー: {e}")
         sys.exit(1)
 
     searxng_client = None

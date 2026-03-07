@@ -17,12 +17,14 @@ from researcher.web_crawler import WebCrawler
 from researcher.reranker import EmbeddingReranker
 from researcher.session_manager import SessionManager
 from researcher.config import (
+    build_llm_client,
     get_searxng_url,
     get_embedding_model,
     get_relevance_threshold,
     ensure_ollama_running,
     ensure_searxng_running,
     load_settings,
+    parse_model_key,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -193,13 +195,18 @@ def initialize_session_chat():
         LOGGER.info("First Chat initialization: Running full connection tests")
         
         # Ensure services are running
+        model = st.session_state.get("model") or st.session_state.settings.get("response_model")
+        provider_name, _model_id = parse_model_key(model or "")
+        is_ollama = provider_name is None or provider_name.lower() == "ollama"
+
         try:
-            if not ensure_ollama_running():
+            if is_ollama and not ensure_ollama_running():
                 st.error("❌ Ollamaサーバーを起動できません。`ollama serve` を実行してください。")
                 st.stop()
         except Exception as e:
-            st.error(f"❌ Ollamaサーバーに接続できません: {e}")
-            st.stop()
+            if is_ollama:
+                st.error(f"❌ Ollamaサーバーに接続できません: {e}")
+                st.stop()
         
         # Initialize SearXNG (optional)
         try:
@@ -207,8 +214,7 @@ def initialize_session_chat():
         except Exception as e:
             st.warning(f"⚠️ SearXNGの起動に失敗しました: {e}")
         
-        # Initialize Ollama client
-        model = st.session_state.get("model") or st.session_state.settings.get("response_model")
+        # Initialize LLM client
         if not model:
             st.error("❌ モデルが設定されていません。")
             st.info("🔧 Settingsページでモデルを選択してください。")
@@ -216,17 +222,17 @@ def initialize_session_chat():
                 st.switch_page("pages/3_⚙️_Settings.py")
             st.stop()
         try:
-            ollama_client = OllamaClient(model=model)
-            if not ollama_client.test_connection():
-                st.error("❌ Ollamaモデルが正しく応答しません。モデル名を確認してください。")
+            llm_client = build_llm_client(model, st.session_state.settings)
+            if not llm_client.test_connection():
+                st.error("❌ LLMモデルが正しく応答しません。モデル名・設定を確認してください。")
                 st.stop()
         except Exception as e:
-            st.error(f"❌ Ollama初期化エラー: {e}")
+            st.error(f"❌ LLMクライアント初期化エラー: {e}")
             st.stop()
         
-        # Cache available models
+        # Cache available models (Ollama only - other providers use configured model lists)
         try:
-            available_models = ollama_client.list_models()
+            available_models = llm_client.list_models()
             st.session_state.available_models = available_models if available_models else []
         except Exception as e:
             st.warning(f"⚠️ モデルリスト取得失敗: {e}")
@@ -253,9 +259,9 @@ def initialize_session_chat():
         # Subsequent initializations: Reuse existing clients (fast path)
         LOGGER.info("Chat re-initialization: Reusing existing clients (skipping connection tests)")
         
-        # Reuse existing Ollama client from ChatManager
+        # Reuse existing LLM client from ChatManager
         if "chat_manager" in st.session_state:
-            ollama_client = st.session_state.chat_manager.ollama_client
+            llm_client = st.session_state.chat_manager.llm_client
             searxng_client = st.session_state.chat_manager.searxng_client
         else:
             # Fallback: Create new clients without connection tests
@@ -266,7 +272,7 @@ def initialize_session_chat():
                 if st.button("⚙️ Settingsページへ", key="goto_settings_fallback"):
                     st.switch_page("pages/3_⚙️_Settings.py")
                 st.stop()
-            ollama_client = OllamaClient(model=model)
+            llm_client = build_llm_client(model, st.session_state.settings)
             
             searxng_client = None
             if st.session_state.get("_searxng_available", False):
@@ -280,18 +286,18 @@ def initialize_session_chat():
     # Initialize other components
     embedding_model = get_embedding_model(None)
     threshold = get_relevance_threshold(None)
-    reranker = EmbeddingReranker(ollama_client, model=embedding_model, threshold=threshold)
+    reranker = EmbeddingReranker(llm_client, model=embedding_model, threshold=threshold)
     
     citation_manager = CitationManager()
     web_crawler = WebCrawler() if searxng_client else None
     
     language = st.session_state.get("language", "ja")
-    agent = QueryAgent(ollama_client, language=language) if searxng_client else None
+    agent = QueryAgent(llm_client, language=language) if searxng_client else None
     
     # Create ChatManager
     if "chat_manager" not in st.session_state:
         chat_manager = ChatManager(
-            ollama_client=ollama_client,
+            ollama_client=llm_client,
             searxng_client=searxng_client,
             agent=agent,
             reranker=reranker,

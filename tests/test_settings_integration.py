@@ -32,7 +32,9 @@ def test_settings_integration():
                 "eval_model": "llama3.2:1b",
                 "searxng_engine": "news",
                 "searxng_lang": "en",
-                "searxng_safesearch": "strict"
+                "searxng_safesearch": "strict",
+                "ui_text_size": "medium",
+                "llm_providers": [],
             }
             success = save_settings(custom_settings)
             assert success is True
@@ -53,7 +55,9 @@ def test_settings_integration():
                 "eval_model": "llama3.2:1b",
                 "searxng_engine": "news",
                 "searxng_lang": "en",
-                "searxng_safesearch": "strict"
+                "searxng_safesearch": "strict",
+                "ui_text_size": "medium",
+                "llm_providers": [],
             }
             save_settings(partial_settings)
             loaded = load_settings()

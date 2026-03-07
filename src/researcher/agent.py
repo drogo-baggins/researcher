@@ -3,8 +3,6 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
-from researcher.ollama_client import OllamaClient
-
 LOGGER = logging.getLogger(__name__)
 
 
@@ -31,7 +29,7 @@ class QueryAgent:
         "Output in JSON format: {\"needs_search\": bool, \"keywords\": [\"...\"], \"reasoning\": \"...\"}."
     )
 
-    def __init__(self, ollama_client: OllamaClient, language: str = "ja") -> None:
+    def __init__(self, ollama_client: Any, language: str = "ja") -> None:
         self.ollama_client = ollama_client
         self.language = language
         self.system_prompt = self.SYSTEM_PROMPT_JA if language == "ja" else self.SYSTEM_PROMPT_EN

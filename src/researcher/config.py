@@ -264,7 +264,16 @@ DEFAULT_SETTINGS = {
     "searxng_engine": "general",
     "searxng_lang": "ja",
     "searxng_safesearch": "off",
-    "ui_text_size": "medium"  # small/medium/large
+    "ui_text_size": "medium",  # small/medium/large
+    # List of OpenAI-compatible provider configurations.
+    # Each entry is a dict:
+    #   {
+    #     "name": str,       # Display name, used as the provider prefix in model keys
+    #     "base_url": str,   # API endpoint, e.g. "https://api.venice.ai/api/v1"
+    #     "api_key": str,    # Bearer token (stored in plain text locally)
+    #     "models": [str],   # Manually configured list of model IDs
+    #   }
+    "llm_providers": [],
 }
 
 
@@ -572,3 +581,75 @@ def get_feedback_stats(model_filter: Optional[str] = None) -> Dict[str, Any]:
         "by_model": by_model
     }
 
+
+# ==============================================================================
+# LLMクライアント・ファクトリ
+# ==============================================================================
+
+#: セパレータ。モデルキーの形式: ``"providerName::model_id"``
+MODEL_KEY_SEPARATOR = "::"
+
+
+def parse_model_key(model_key: str):
+    """モデルキーをプロバイダ名とモデルIDに分解する。
+
+    Returns:
+        Tuple (provider_name_or_none, model_id)
+
+    Examples::
+
+        parse_model_key("llama3")           → (None, "llama3")
+        parse_model_key("ollama::llama3")   → ("ollama", "llama3")
+        parse_model_key("VeniceAI::llama-3.3-70b") → ("VeniceAI", "llama-3.3-70b")
+    """
+    if MODEL_KEY_SEPARATOR in model_key:
+        provider_name, model_id = model_key.split(MODEL_KEY_SEPARATOR, 1)
+        return provider_name.strip(), model_id.strip()
+    return None, model_key.strip()
+
+
+def build_llm_client(model_key: Optional[str], settings: Optional[Dict[str, Any]] = None):
+    """モデルキーから適切なLLMクライアントを生成するファクトリ。
+
+    モデルキーの形式:
+    - ``"model_name"`` or ``"ollama::model_name"`` → :class:`OllamaClient`
+    - ``"ProviderName::model_id"`` → :class:`OpenAICompatClient`
+      (settings の ``llm_providers`` から該当プロバイダを検索)
+
+    Args:
+        model_key: モデルキー文字列 (``None`` または空文字の場合は OllamaClient を返す)
+        settings: 設定辞書。``None`` の場合は :func:`load_settings` で読み込む。
+
+    Returns:
+        OllamaClient または OpenAICompatClient インスタンス。
+    """
+    from researcher.ollama_client import OllamaClient
+    from researcher.openai_compat_client import OpenAICompatClient
+
+    if not model_key:
+        return OllamaClient(model=None)
+
+    if settings is None:
+        settings = load_settings()
+
+    provider_name, model_id = parse_model_key(model_key)
+
+    # Plain model name or explicit "ollama::" prefix → Ollama
+    if provider_name is None or provider_name.lower() == "ollama":
+        return OllamaClient(model=model_id)
+
+    # Look up named provider in config
+    providers: list = settings.get("llm_providers", [])
+    for provider in providers:
+        if provider.get("name") == provider_name:
+            return OpenAICompatClient(
+                model=model_id,
+                base_url=provider.get("base_url", ""),
+                api_key=provider.get("api_key", ""),
+            )
+
+    logging.warning(
+        "プロバイダ '%s' が設定に見つかりません。OllamaClientにフォールバックします。",
+        provider_name,
+    )
+    return OllamaClient(model=model_id)

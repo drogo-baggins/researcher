@@ -11,7 +11,7 @@ MAX_SELF_EVAL_RETRIES = 1
 class ChatManager:
     def __init__(
         self,
-        ollama_client,
+        ollama_client=None,
         searxng_client: Optional[Any] = None,
         agent: Optional[Any] = None,
         reranker: Optional[Any] = None,
@@ -26,7 +26,9 @@ class ChatManager:
         searxng_lang: Optional[str] = None,
         searxng_safesearch: Optional[str] = None,
     ):
-        self.ollama_client = ollama_client
+        # Accept both ollama_client (legacy) and llm_client (new) parameter names.
+        # Stored as self.llm_client; self.ollama_client is a backward-compat property.
+        self.llm_client = ollama_client
         self.searxng_client = searxng_client
         self.agent = agent
         self.reranker = reranker
@@ -46,6 +48,17 @@ class ChatManager:
         self.last_search_turns_remaining: int = 0  # Number of turns to keep injecting crawled content
         self.last_evaluation_score: Optional[Dict[str, Any]] = None  # Store latest evaluation score
         self.pending_search_results: List[Dict[str, Any]] = []  # Store search results for next assistant message
+
+    # ------------------------------------------------------------------
+    # Backward compatibility: external code may read .ollama_client
+    # ------------------------------------------------------------------
+    @property
+    def ollama_client(self):
+        return self.llm_client
+
+    @ollama_client.setter
+    def ollama_client(self, value):
+        self.llm_client = value
 
     def add_system_message(self, content, search_result: bool = False):
         self.messages.append(
@@ -160,7 +173,7 @@ class ChatManager:
             system_count = sum(1 for m in messages if m.get("role") == "system")
             messages.insert(system_count, crawl_system_msg)
         
-        response = self.ollama_client.generate_response(messages)
+        response = self.llm_client.generate_response(messages)
         citations_md = self._format_citations_markdown()
         if citations_md:
             response = response + "\n\n" + citations_md
@@ -204,7 +217,7 @@ class ChatManager:
                                 messages.insert(system_count, crawl_system_msg)
                             
                             # Generate new response
-                            response = self.ollama_client.generate_response(messages)
+                            response = self.llm_client.generate_response(messages)
                             citations_md = self._format_citations_markdown()
                             if citations_md:
                                 response = response + "\n\n" + citations_md
@@ -249,7 +262,7 @@ class ChatManager:
             messages.insert(system_count, crawl_system_msg)
 
         def stream():
-            for chunk in self.ollama_client.generate_response_stream(messages):
+            for chunk in self.llm_client.generate_response_stream(messages):
                 chunks.append(chunk)
                 yield chunk
             response = "".join(chunks)
@@ -300,7 +313,7 @@ class ChatManager:
                                 
                                 # Generate new response (reset chunks for new attempt)
                                 retry_chunks = []
-                                for chunk in self.ollama_client.generate_response_stream(new_messages):
+                                for chunk in self.llm_client.generate_response_stream(new_messages):
                                     retry_chunks.append(chunk)
                                     yield chunk
                                 
@@ -737,8 +750,8 @@ class ChatManager:
         return self.messages
 
     def get_current_model(self) -> str:
-        """Get the current model name from ollama_client."""
-        return self.ollama_client.model if self.ollama_client else "unknown"
+        """Get the current model name from the LLM client."""
+        return self.llm_client.model if self.llm_client else "unknown"
 
     def get_last_evaluation_score(self) -> Optional[Dict[str, Any]]:
         """Get the last evaluation score from self_evaluate().
@@ -763,8 +776,8 @@ class ChatManager:
         Returns:
             Dict with keys: accuracy_score, freshness_score, overall_score, reasoning
         """
-        if not self.ollama_client:
-            # Default fallback when ollama_client is unavailable
+        if not self.llm_client:
+            # Default fallback when llm_client is unavailable
             return {
                 "accuracy_score": 0.5,
                 "freshness_score": 0.5,
@@ -809,22 +822,22 @@ class ChatManager:
                 )
             
             # Use evaluation model (or fallback to response model)
-            eval_model = self.evaluation_model or self.ollama_client.model
+            eval_model = self.evaluation_model or self.llm_client.model
             
             # Temporarily switch model for evaluation if using separate model
             original_model = None
-            if self.evaluation_model and self.evaluation_model != self.ollama_client.model:
-                original_model = self.ollama_client.model
-                self.ollama_client.model = self.evaluation_model
+            if self.evaluation_model and self.evaluation_model != self.llm_client.model:
+                original_model = self.llm_client.model
+                self.llm_client.model = self.evaluation_model
                 LOGGER.debug(f"Switched to evaluation model: {self.evaluation_model}")
             
             try:
                 messages = [{"role": "user", "content": eval_prompt}]
-                eval_response = self.ollama_client.generate_response(messages)
+                eval_response = self.llm_client.generate_response(messages)
             finally:
                 # Restore original model if it was changed
                 if original_model is not None:
-                    self.ollama_client.model = original_model
+                    self.llm_client.model = original_model
                     LOGGER.debug(f"Restored response model: {original_model}")
             
             # Parse JSON response

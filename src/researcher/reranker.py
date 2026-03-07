@@ -1,14 +1,12 @@
 import logging
 import math
-from typing import Dict, Iterable, List, Optional
-
-from researcher.ollama_client import OllamaClient
+from typing import Any, Dict, Iterable, List, Optional
 
 LOGGER = logging.getLogger(__name__)
 
 
 class EmbeddingReranker:
-    def __init__(self, ollama_client: OllamaClient, model: Optional[str] = None, threshold: float = 0.5):
+    def __init__(self, ollama_client: Any, model: Optional[str] = None, threshold: float = 0.5):
         self.ollama_client = ollama_client
         self.model = model
         self.threshold = threshold
