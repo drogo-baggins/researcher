@@ -53,7 +53,16 @@ class WebCrawler:
         if domain in self.blacklist_domains:
             LOGGER.info("Skipping blacklisted domain: %s", domain)
             return None
-        
+
+        # Only allow http/https to prevent SSRF via other schemes
+        try:
+            scheme = urlparse(url).scheme.lower()
+        except Exception:
+            scheme = ""
+        if scheme not in ("http", "https"):
+            LOGGER.warning("Blocked non-http(s) URL scheme '%s': %s", scheme, url)
+            return None
+
         try:
             response = requests.get(
                 url,

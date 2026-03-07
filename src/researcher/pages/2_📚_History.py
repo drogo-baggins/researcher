@@ -9,6 +9,7 @@ Optimized for quick session lookup and viewing.
 import json
 import logging
 from collections import Counter
+from html import escape as html_escape
 from typing import List, Dict, Optional
 
 import streamlit as st
@@ -342,7 +343,7 @@ def render_session_detail(session_id: int):
             if tags:
                 st.markdown("**現在のタグ:**")
                 tags_html = " ".join([
-                    f'<span style="background-color: #e0e0e0; padding: 4px 12px; border-radius: 6px; margin-right: 6px; font-size: 0.9em;">🏷️ {tag}</span>'
+                    f'<span style="background-color: #e0e0e0; padding: 4px 12px; border-radius: 6px; margin-right: 6px; font-size: 0.9em;">🏷️ {html_escape(tag)}</span>'
                     for tag in tags
                 ])
                 st.markdown(tags_html, unsafe_allow_html=True)
@@ -449,17 +450,30 @@ def render_session_detail(session_id: int):
                                 import pandas as pd
                                 df = pd.DataFrame(table_data)
                                 
-                                # Convert URL column to clickable markdown links
+                                # Convert URL column to safe clickable links
                                 def make_clickable(url):
                                     if url and url != "N/A":
-                                        return f'<a href="{url}" target="_blank">{url}</a>'
-                                    return url
+                                        # Only allow http/https schemes to prevent javascript: XSS
+                                        from urllib.parse import urlparse as _up
+                                        scheme = _up(str(url)).scheme.lower()
+                                        if scheme not in ("http", "https"):
+                                            return html_escape(str(url))
+                                        safe_url = html_escape(str(url))
+                                        return f'<a href="{safe_url}" target="_blank" rel="noopener noreferrer">{safe_url}</a>'
+                                    return html_escape(str(url)) if url else ""
                                 
                                 if "URL" in df.columns:
                                     df["URL"] = df["URL"].apply(make_clickable)
-                                
+                                # Escape all other columns, render URL column raw (already sanitized)
+                                html_cols = {"URL"} if "URL" in df.columns else set()
+                                escaped_df = df.copy()
+                                for col in escaped_df.columns:
+                                    if col not in html_cols:
+                                        escaped_df[col] = escaped_df[col].apply(
+                                            lambda v: html_escape(str(v)) if v is not None else ""
+                                        )
                                 # Display as HTML table with clickable links
-                                st.markdown(df.to_html(escape=False, index=False), unsafe_allow_html=True)
+                                st.markdown(escaped_df.to_html(escape=False, index=False), unsafe_allow_html=True)
                             else:
                                 st.info("検索結果がありません")
         else:
