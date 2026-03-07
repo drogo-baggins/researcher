@@ -261,6 +261,7 @@ DEFAULT_SETTINGS = {
     "search_model": "",
     "response_model": "",
     "eval_model": "",
+    "embedding_model": "nomic-embed-text-v2-moe",
     "searxng_engine": "general",
     "searxng_lang": "ja",
     "searxng_safesearch": "off",

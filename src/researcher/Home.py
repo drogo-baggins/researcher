@@ -45,7 +45,7 @@ def main():
     
     # Welcome UI
     st.title("🔍 Researcher")
-    st.markdown("*ローカルAIリサーチャー - Ollama + SearXNG*")
+    st.markdown("*プライベートAIアンサーエンジン — LLM + SearXNG + Agent*")
     st.markdown("---")
     
     st.subheader("📖 使い方")

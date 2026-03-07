@@ -182,13 +182,15 @@ class OpenAICompatClient:
                         break
                     try:
                         chunk = json.loads(line)
-                        delta = (
-                            chunk.get("choices", [{}])[0]
-                            .get("delta", {})
-                            .get("content")
-                        )
-                        if delta:
-                            yield delta
+                        choices = chunk.get("choices", [])
+                        if choices:
+                            delta = (
+                                choices[0]
+                                .get("delta", {})
+                                .get("content")
+                            )
+                            if delta:
+                                yield delta
                     except json.JSONDecodeError:
                         LOGGER.debug("SSEチャンク解析スキップ: %s", line)
         except requests.exceptions.RequestException as exc:

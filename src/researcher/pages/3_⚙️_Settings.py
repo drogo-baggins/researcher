@@ -206,7 +206,7 @@ def get_available_models():
 # Render: LLM model selections
 # ---------------------------------------------------------------------------
 
-def render_llm_settings(settings: dict, all_model_options: list) -> dict:
+def render_llm_settings(settings: dict, all_model_options: list, ollama_models: list) -> dict:
     st.subheader("🤖 LLMモデル設定")
 
     if not all_model_options:
@@ -216,7 +216,8 @@ def render_llm_settings(settings: dict, all_model_options: list) -> dict:
         f"**現在の設定**:\n"
         f"- 検索語生成: {settings.get('search_model') or '(未設定)'}\n"
         f"- 回答生成: {settings.get('response_model') or '(未設定)'}\n"
-        f"- 品質検証: {settings.get('eval_model') or '(未設定)'}"
+        f"- 品質検証: {settings.get('eval_model') or '(未設定)'}\n"
+        f"- 埋め込みモデル: {settings.get('embedding_model') or '(未設定)'}"
     )
 
     options = list(all_model_options)
@@ -238,12 +239,50 @@ def render_llm_settings(settings: dict, all_model_options: list) -> dict:
     eval_model = _sel("品質検証モデル", "eval_model", "回答の品質評価に使用するモデル（軽量モデル推奨）", "eval_model_select")
 
     # Warn if an Ollama-style model name is not present in the actual Ollama list
-    ollama_models = [m for m in all_model_options if MODEL_KEY_SEPARATOR not in m]
+    ollama_model_names = [m for m in all_model_options if MODEL_KEY_SEPARATOR not in m]
     for lbl, val in [("検索語生成", search_model), ("回答生成", response_model), ("品質検証", eval_model)]:
-        if val and MODEL_KEY_SEPARATOR not in val and ollama_models and val not in ollama_models:
+        if val and MODEL_KEY_SEPARATOR not in val and ollama_model_names and val not in ollama_model_names:
             st.warning(f"⚠️ {lbl}モデル '{val}' がOllamaに見つかりません。")
 
-    return {"search_model": search_model, "response_model": response_model, "eval_model": eval_model}
+    st.markdown("---")
+    st.markdown("**埋め込みモデル（リランカー用）**")
+    st.caption("検索結果の関連度スコアリングに使用します。Ollamaで利用可能な埋め込みモデルを指定してください。")
+
+    # Well-known embedding models to always show as options
+    KNOWN_EMBED_MODELS = [
+        "nomic-embed-text-v2-moe",
+        "nomic-embed-text",
+        "mxbai-embed-large",
+        "all-minilm",
+        "bge-m3",
+        "snowflake-arctic-embed",
+    ]
+    embed_options = list(KNOWN_EMBED_MODELS)
+    for m in ollama_models:
+        if m not in embed_options:
+            embed_options.append(m)
+    current_embed = settings.get("embedding_model", "nomic-embed-text-v2-moe")
+    if current_embed and current_embed not in embed_options:
+        embed_options.insert(0, current_embed)
+
+    embed_idx = embed_options.index(current_embed) if current_embed in embed_options else 0
+    embedding_model = st.selectbox(
+        "埋め込みモデル",
+        options=embed_options,
+        index=embed_idx,
+        help="OllamaClient で使用する埋め込みモデル。`ollama pull <model>` で事前に取得してください。",
+        key="embedding_model_select",
+    )
+
+    if embedding_model and ollama_models and embedding_model not in ollama_models:
+        st.warning(f"⚠️ 埋め込みモデル '{embedding_model}' がOllamaに見つかりません。`ollama pull {embedding_model}` を実行してください。")
+
+    return {
+        "search_model": search_model,
+        "response_model": response_model,
+        "eval_model": eval_model,
+        "embedding_model": embedding_model,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +384,7 @@ def main():
     # --- LLM model selectors ---
     ollama_models = _get_ollama_models()
     all_model_options = _build_all_model_options(settings, ollama_models)
-    llm_selections = render_llm_settings(settings, all_model_options)
+    llm_selections = render_llm_settings(settings, all_model_options, ollama_models)
 
     st.divider()
 

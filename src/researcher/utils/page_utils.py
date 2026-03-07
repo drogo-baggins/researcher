@@ -284,9 +284,12 @@ def initialize_session_chat():
                     searxng_client = None
     
     # Initialize other components
-    embedding_model = get_embedding_model(None)
+    # Embedding model: settings > env var > default
+    _embedding_settings = st.session_state.get("settings", {})
+    embedding_model = _embedding_settings.get("embedding_model") or get_embedding_model(None)
     threshold = get_relevance_threshold(None)
-    reranker = EmbeddingReranker(llm_client, model=embedding_model, threshold=threshold)
+    embedding_ollama_client = OllamaClient(model=embedding_model)
+    reranker = EmbeddingReranker(embedding_ollama_client, model=embedding_model, threshold=threshold)
     
     citation_manager = CitationManager()
     web_crawler = WebCrawler() if searxng_client else None

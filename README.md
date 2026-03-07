@@ -1,12 +1,13 @@
-﻿# researcher - Perplexity-style ローカル検索AI
+﻿# researcher - プライベートAIアンサーエンジン
 
-**researcher** は、ローカル／クラウド LLM + Web検索 (SearXNG) + 自動検索判断 (Agent) + MCP統合を組み合わせた、Perplexity-like のオープンソースシステムです。
+**researcher** は、ローカル／クラウド LLM + Web検索 (SearXNG) + 自動検索判断 (Agent) + MCP統合を組み合わせた、オープンソースのプライベートAIアンサーエンジンです。
+Ollama によるローカル実行から VeniceAI・OpenRouter 等のクラウドプロバイダまで、LLM の選択肢を自分でコントロールしながら、トラッキングされない検索と引用付き合成回答を実現します。
 
 ## 主要機能一覧
 
 - ✅ **マルチプロバイダ LLM 対応**: Ollama (llama3, mistral 等) に加え、OpenAI 互換 API なら VeniceAI・Azure OpenAI・OpenRouter など任意のプロバイダを複数登録可能
 - ✅ **自動Web検索**: 最新ニュース/統計/イベント/不明な事実を自動判定して検索
-- ✅ **引用付き回答**: Perplexity風に信頼性スコア付き引用を自動生成
+- ✅ **引用付き回答**: 信頼性スコア付きの引用を自動生成し、情報源を明示
 - ✅ **MCP統合**: ファイルシステム/カレンダー/Notes等のシステムツール活用
 - ✅ **多言語対応**: 日本語/英語で自動判定ルール使い分け
 - ✅ **WebUI メイン利用**: Streamlit ベースのブラウザUIで直感的に操作

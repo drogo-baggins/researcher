@@ -138,7 +138,7 @@ def main():
     parser.add_argument(
         "--auto-search-default",
         action="store_true",
-        help="自動検索をデフォルトで有効化（Perplexity UX再現）。無効化するには --no-auto-search を使用",
+        help="自動検索をデフォルトで有効化（起動時から自動Web検索が有効になります）。無効化するには --no-auto-search を使用",
     )
     parser.add_argument(
         "--no-auto-search",

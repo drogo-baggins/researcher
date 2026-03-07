@@ -229,8 +229,8 @@ def initialize_session_chat():
     search_ollama_client = OllamaClient(model=search_model)
     response_ollama_client = OllamaClient(model=response_model)
     
-    # Embedding model for reranker
-    embedding_model = get_embedding_model(None)
+    # Embedding model for reranker (settings > env var > default)
+    embedding_model = settings.get("embedding_model") or get_embedding_model(None)
     threshold = get_relevance_threshold(None)
     embedding_ollama_client = OllamaClient(model=embedding_model)
     reranker = EmbeddingReranker(embedding_ollama_client, model=embedding_model, threshold=threshold)

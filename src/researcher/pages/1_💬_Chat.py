@@ -243,7 +243,7 @@ def auto_save_session(user_input: str, messages: list, chat_manager: Any, eval_s
 def render_chat():
     """メインチャットインターフェース"""
     st.title("🔍 Researcher")
-    st.markdown("*ローカルAIリサーチャー - Ollama + SearXNG*")
+    st.markdown("*プライベートAIアンサーエンジン — LLM + SearXNG + Agent*")
     
     # Initialize message display limit for virtualization
     if "message_display_limit" not in st.session_state:
