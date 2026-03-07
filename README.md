@@ -1,322 +1,307 @@
-# researcher - Perplexity-style ローカル検索AI
+﻿# researcher - Perplexity-style ローカル検索AI
 
-**researcher** は、ローカル LLM (Ollama) + Web検索 (SearXNG) + 自動検索判断 (Agent) + MCP統合を組み合わせた、Perplexity-like のオープンソースシステムです。
+**researcher** は、ローカル／クラウド LLM + Web検索 (SearXNG) + 自動検索判断 (Agent) + MCP統合を組み合わせた、Perplexity-like のオープンソースシステムです。
 
 ## 主要機能一覧
 
-- ✅ **ローカルLLM対話**: Ollama(llama3, mixtral等)で高速・プライベート対話
+- ✅ **マルチプロバイダ LLM 対応**: Ollama (llama3, mistral 等) に加え、OpenAI 互換 API なら VeniceAI・Azure OpenAI・OpenRouter など任意のプロバイダを複数登録可能
 - ✅ **自動Web検索**: 最新ニュース/統計/イベント/不明な事実を自動判定して検索
 - ✅ **引用付き回答**: Perplexity風に信頼性スコア付き引用を自動生成
 - ✅ **MCP統合**: ファイルシステム/カレンダー/Notes等のシステムツール活用
 - ✅ **多言語対応**: 日本語/英語で自動判定ルール使い分け
-- ✅ **ワンコマンド起動**: `./run.sh` で自動初期化
+- ✅ **WebUI メイン利用**: Streamlit ベースのブラウザUIで直感的に操作
+- ✅ **セッション履歴管理**: 会話の保存・検索・再開・タグ付け
 
 ---
 
-## 🚀 クイックスタート（コマンド1つで起動）
+## 🚀 クイックスタート
 
 ### 前提条件
-- Python 3.11+
-- Ollama: [ollama.com](https://ollama.com) からインストール
-- Docker（SearXNG使用時、オプション）
 
-### 初回セットアップ（1回だけ実行）
+| 必須 | 任意 |
+|------|------|
+| Python 3.11+ | Ollama（ローカル LLM を使う場合） |
+| Docker または Podman（SearXNG 用） | OpenAI 互換プロバイダの API キー |
+
+### 初回セットアップ（1 回のみ）
+
 ```bash
 cd researcher
-
-# 初回セットアップ（Ollama/SearXNG自動初期化）
 ./setup.sh
 ```
 
-### 毎回の起動（以降はこれだけ）
+### 起動
+
 ```bash
 ./run.sh
 ```
 
-その後、CLIが起動したら:
-```
-researcher CLI (Ollama)
-/exit で終了, /clear で履歴クリア, /history で履歴表示, /search <query> でSearXNG検索
-自動検索モード: 有効（最新情報が必要な質問を自動検知）
-You: 最新のAIニュースは？
-[検索実行中...]
-
-最新のAIニュースには以下のようなものがあります...
-
-## 参照
-[1] AI News Daily - ainewsdaily.com (信頼性: 0.92)
-[2] TechCrunch AI - techcrunch.com/ai (信頼性: 0.89)
-```
+ブラウザが自動的に `http://localhost:8501` を開き、WebUI が表示されます。
 
 ---
 
-## 🎨 Streamlit WebUI
+## 🌐 WebUI（メイン利用方法）
 
-researcher は **Streamlit ベースの WebUI** を提供しており、すぐに使用できます。以下の機能をサポート：
+researcher のメインインタフェースは **Streamlit ブラウザ UI** です。
 
-- 📊 **インタラクティブなチャットインターフェース**: ブラウザベースの対話型UI
-- 💾 **セッション履歴管理**: 過去の会話を保存・検索・再開・削除
-- 🔄 **動的モデル切り替え**: UIからOllamaモデルをリアルタイム変更
-- 🌐 **多言語対応**: セッションごとに日本語/英語を設定
-- 📈 **引用の可視化**: 検索結果を引用として表示
-- ⚡ **自動保存**: 各メッセージ完了後に自動的にセッションを保存
-
-### クイックスタート
-
-**推奨される起動方法** - `researcher-webui` コマンド（entry point 経由）:
+### 起動方法
 
 ```bash
+# エントリポイント経由（推奨）
 researcher-webui
+
+# または直接 Streamlit で起動
+streamlit run src/researcher/Home.py
 ```
 
-**代替方法** - 直接 Streamlit で起動:
+### 画面構成
 
-```bash
-streamlit run src/researcher/webui.py
-```
+| ページ | 説明 |
+|--------|------|
+| **🏠 ホーム** | 接続状態の確認とナビゲーション |
+| **💬 Chat** | LLM との対話・自動Web検索 |
+| **📚 History** | 過去のセッション検索・再開・タグ管理 |
+| **⚙️ Settings** | LLMプロバイダ・モデル・SearXNG・UI設定 |
 
-起動後、ブラウザが自動的に `http://localhost:8501` に開きます。
+### 基本的な使い方
 
-### 主な機能
+1. ブラウザで `http://localhost:8501` を開く
+2. **Settings** ページでモデルや検索設定を確認する
+3. **Chat** ページで質問を入力する
+   - 自動検索モードが有効な場合、最新情報が必要な質問は自動的に Web 検索が実行されます
+   - 回答下部の引用リンクから情報源を確認できます
+4. **History** ページで過去の会話を検索・再開できます
 
-1. **チャットインターフェース**: テキストボックスに質問を入力すると、自動的に検索が実行され、その結果に基づいて回答が生成されます
-2. **セッション管理**: サイドバーから過去のセッションを選択、新規作成、検索、または削除できます
-3. **モデルと言語の動的切り替え**: サイドバーから実行中の Ollama モデルと使用言語（日本語/英語）を動的に変更でき、選択はセッションに保存されます
-4. **引用表示**: 回答に使用された検索結果が引用として表示されます
-
-### 使用前提と制限事項 ⚠️
-
-**重要**: Streamlit WebUI は以下の前提で設計されています。必ずご確認ください：
+### セキュリティに関する注意事項 ⚠️
 
 | 項目 | 詳細 |
 |------|------|
-| **ローカル実行** | WebUI は `localhost:8501` にのみバインドされます。同一マシン上からのアクセスを想定しています |
-| **認証なし** | ユーザー認証機構がありません。ローカルネットワークに接続されたマシンから誰でもアクセス可能です |
+| **ローカル実行** | `localhost:8501` にのみバインドされます（同一マシンからのアクセス想定） |
+| **認証なし** | ユーザー認証機構がありません |
 | **暗号化なし** | セッションデータは `~/.researcher/sessions.db` に平文で保存されます |
-| **MCP ツールアクセス** | MCP (Model Context Protocol) を通じて、LLM がユーザープロンプト経由でファイルシステムにアクセスできます |
 
-**推奨される運用環境:**
-- 単一ユーザーによる個人マシン上での使用
-- インターネットに接続されていないマシン、または VPN 内のみでの使用
-- 機密情報を含むプロンプトの実行は避ける
+**推奨される運用環境**: 単一ユーザーによる個人マシン上での使用。  
+リモートアクセスが必要な場合は SSH トンネル（`ssh -N -L 8501:localhost:8501 ...`）またはリバースプロキシ + HTTPS + 認証層の設置を強く推奨します。
 
-**共有ネットワーク環境での使用:**
-- SSH トンネル経由でのリモートアクセス（`ssh -N -L 8501:localhost:8501 ...`）
-- リバースプロキシ + HTTPS + 認証層の設置
-を強く推奨します。
-
-詳細なガイドは以下をご覧ください：
-- 📘 [Streamlit WebUI ガイド](docs/streamlit-guide.md) - UI の各部分、トラブルシューティング
-- 🔒 [セキュリティガイド](docs/security.md) - セキュリティ設定、推奨される運用方法
-- 📋 [MCP セットアップガイド](docs/mcp-setup.md) - ツールアクセスに関する注意
+詳細は [docs/security.md](docs/security.md) を参照してください。
 
 ---
 
-## 📖 ハンズオンガイド：5つのユースケース
+## ⚙️ 設定（Settings ページ）
 
-### ユースケース 1: 政治・社会ニュース調査
+WebUI の **Settings（⚙️）** ページから各種設定を変更できます。設定は `~/.researcher/settings.json` に保存されます。
 
-**シナリオ**: 最新の政治支持率動向を調べたい
+### LLM プロバイダ管理
 
-```bash
-./run.sh --auto-search-default
-```
+OpenAI 互換の API エンドポイントを持つプロバイダを複数登録できます。
 
-```
-You: 政党支持率の動向を教えてください
-[検索結果: 政党支持率の動向を教えてください]
-1. www.jiji.com - https://www.jiji.com/jc/tokushu?id=seitou_shijiritsu&g=pol [1]
-   時事ドットコムニュース · 各政党の支持率推移を時事通信の世論調査に基づき...
-2. news.web.nhk - https://news.web.nhk/senkyo/shijiritsu/ [2]
-   NHKが毎月行っている世論調査のうち、内閣支持率については...
+**Settings → LLM プロバイダ** セクションで「＋ 新しいプロバイダを追加」:
 
-直近の調査によると、各政党の支持率は以下の通りです...
+| フィールド | 例 | 説明 |
+|-----------|-----|------|
+| プロバイダ名 | `VeniceAI` | 識別用の任意の名前 |
+| ベース URL | `https://api.venice.ai/api/v1` | OpenAI 互換エンドポイントのベース URL |
+| API キー | `ven-xxxx` | プロバイダから発行された API キー |
+| モデル一覧 | `llama-3.3-70b, mistral-31-24b` | カンマ区切りで使用するモデルを列挙 |
 
-## 参照
-[1] www.jiji.com (信頼性: 0.50)
-[2] news.web.nhk (信頼性: 0.50)
-```
+登録後、**LLM モデル設定** のセレクトボックスに `プロバイダ名::モデル名` 形式（例: `VeniceAI::llama-3.3-70b`）で表示されます。
 
-### ユースケース 2: 技術トレンド調査
+#### 対応プロバイダの例
 
-**シナリオ**: 最新のPython 3.14の新機能を知りたい
+| プロバイダ | ベース URL |
+|-----------|-----------|
+| VeniceAI | `https://api.venice.ai/api/v1` |
+| OpenRouter | `https://openrouter.ai/api/v1` |
+| Azure OpenAI | `https://<resource>.openai.azure.com/openai/deployments/<deployment>` |
+| Ollama (ローカル) | *プロバイダ登録不要・自動検出* |
 
-```bash
-./run.sh --model mixtral --stream
-```
+### LLM モデル設定
 
-```
-You: Python 3.14の新機能は？
-[自動検索で最新情報を取得...]
+| 設定項目 | 説明 |
+|---------|------|
+| 検索語生成モデル | Web検索クエリの生成に使用するモデル（軽量モデル推奨） |
+| 回答生成モデル | ユーザーへの最終回答を生成するモデル |
+| 品質検証モデル | 回答の自己評価に使用するモデル（軽量モデル推奨） |
 
-Python 3.14 は 2025年10月に予定されており、以下の新機能が含まれます...
+### SearXNG 検索設定
 
-## 参照
-[1] Python Official Blog
-[2] PEP Documents
-```
-
-### ユースケース 3: ローカルファイル分析（MCP有効時）
-
-**シナリオ**: プロジェクトのファイルをAIが読んで分析
-
-```bash
-./run.sh --enable-mcp
-```
-
-```
-You: このプロジェクトのREADMEの内容を要約して
-[MCP FileSystemで /path/to/README.md を読み込み...]
-
-このプロジェクトは以下の機能を提供しています：
-1. ローカルLLM対話
-2. 自動Web検索
-3. 引用付き回答生成
-...
-```
-
-### ユースケース 4: 多ターン調査・深掘り
-
-**シナリオ**: 段階的に情報を掘り下げる
-
-```bash
-./run.sh --auto-search-default
-```
-
-```
-You: 生成AI規制の動向は？
-[検索で最新規制情報を取得...]
-
-EU: DMA/AI Act施行（2024年〜）
-US: Executive Order等で規制方向性を検討中
-JP: 政府がAI戦略を推進中
-
-You: 日本の規制は具体的にどのようなものですか？
-[追加検索で日本の具体的な規制情報を取得...]
-
-日本では以下の施策が進行中です：
-- AI安全研究所の設置
-- 倫理ガイドラインの策定
-...
-```
-
-### ユースケース 5: コード質問とベストプラクティス
-
-**シナリオ**: 最新のコーディング手法を学ぶ
-
-```bash
-./run.sh
-```
-
-```
-You: 2025年のPythonのテストのベストプラクティスは？
-[最新のテスティング情報を自動検索...]
-
-現在のベストプラクティスは以下の通りです：
-
-1. **Type Hints の活用**: より厳密な型チェック
-2. **pytest の最新機能**: Async Test対応の拡充
-3. **Property-Based Testing**: hypothesis库の活用
-...
-
-## 参照
-[1] pytest Documentation 2025
-[2] PEP 484+ Type Hints Guide
-```
-
-
+| 設定項目 | 説明 |
+|---------|------|
+| 検索エンジン | `general` / `news` / `science` など |
+| 言語 | 検索言語（`ja` / `en` など） |
+| セーフサーチ | `off` / `moderate` / `strict` |
 
 ---
 
-## ⚙️ CLI フラグリファレンス
+## 🐋 SearXNG セットアップ
 
-| フラグ | 説明 | デフォルト | 例 |
-|--------|------|-----------|-----|
-| `--model` | 使用するLLMモデル名 | 環境変数`OLLAMA_MODEL` / `gpt-oss:20b` | `--model mixtral` |
-| `--stream` | ストリーミング出力 | OFF | `--stream` |
-| `--no-stream` | ストリーミング出力を無効化（出力を一度に返す） | ON | `--no-stream` |
-| `--auto-search` | 手動でQueryAgent検索を有効化 | OFF | `--auto-search` |
-| `--auto-search-default` | デフォルトで自動検索を有効 | 環境変数`AUTO_SEARCH_DEFAULT` | `--auto-search-default` |
-| `--no-auto-search` | 自動検索を無効化（`--auto-search-default`と併用） | OFF | `--no-auto-search` |
-| `--searxng-url` | SearXNGサーバーのURL | `http://localhost:8888` | `--searxng-url http://searxng:8888` |
-| `--embedding-model` | 埋め込みモデル名 | `nomic-embed-text-v2-moe` | `--embedding-model nomic-embed-text` |
-| `--relevance-threshold` | 再ランク時の関連性閾値 | 0.5（run.sh と一致） | `--relevance-threshold 0.3` |
-| `--agent-language` | QueryAgent の言語（ja/en） | ja (環境変数`AGENT_LANGUAGE`) | `--agent-language en` |
-| `--enable-mcp` | MCP機能を有効化 | OFF | `--enable-mcp` |
-| `--mcp-config` | MCPサーバー設定 | デフォルト設定 | `--mcp-config ./mcp-config.json` |
+SearXNG はプライバシーを重視したオープンソースのメタ検索エンジンです。Docker または Podman で手軽に起動できます。
 
-### 使用例
+### Docker を使う場合
 
 ```bash
-# 日本語でAuto-Search有効
-./run.sh --auto-search-default --stream
+# 起動
+docker run -d \
+  --name searxng \
+  -p 8888:8080 \
+  -v $(pwd)/searxng_settings.yml:/etc/searxng/settings.yml:ro \
+  searxng/searxng
 
-# 英語でAuto-Search、MCPも有効
-./run.sh --auto-search-default --agent-language en --enable-mcp
+# 動作確認
+curl "http://localhost:8888/search?q=test&format=json"
+```
 
-# SearXNGカスタムURL
-./run.sh --searxng-url http://my-searxng.local:8888
+`docker compose` を使う場合:
 
-# テストモード（Non-Streaming）
-./run.sh --model mistral --no-auto-search
+```yaml
+# docker-compose.yml
+services:
+  searxng:
+    image: searxng/searxng
+    ports:
+      - "8888:8080"
+    volumes:
+      - ./searxng_settings.yml:/etc/searxng/settings.yml:ro
+    restart: unless-stopped
+```
+
+```bash
+docker compose up -d
+```
+
+### Podman を使う場合
+
+Podman は Docker 互換のデーモンレスコンテナランタイムです。`docker` コマンドをそのまま `podman` に読み替えて使用できます。
+
+```bash
+# 起動
+podman run -d \
+  --name searxng \
+  -p 8888:8080 \
+  -v $(pwd)/searxng_settings.yml:/etc/searxng/settings.yml:ro \
+  docker.io/searxng/searxng
+
+# 動作確認
+curl "http://localhost:8888/search?q=test&format=json"
+```
+
+`podman-compose` を使う場合:
+
+```bash
+pip install podman-compose   # 未インストールの場合
+podman-compose up -d
+```
+
+**自動起動（systemd ユーザーサービス）**:
+
+```bash
+# コンテナ起動後、systemd サービスを生成
+podman generate systemd --name searxng --new --files
+mkdir -p ~/.config/systemd/user
+mv container-searxng.service ~/.config/systemd/user/
+systemctl --user enable --now container-searxng.service
+```
+
+**Windows で Podman Desktop を使う場合**:  
+Podman Desktop の GUI から「New Container」→ `docker.io/searxng/searxng` を指定し、ポートを `8888:8080` に設定して起動するだけです。
+
+### JSON API の有効化について
+
+本リポジトリに同梱の `searxng_settings.yml` には JSON API が有効化済みのため、上記コマンドでそのままマウントすれば追加設定は不要です。
+
+独自の設定ファイルを使う場合は `search.formats` に `json` を追加してください:
+
+```yaml
+search:
+  formats:
+    - html
+    - json   # ← 追加
 ```
 
 ---
 
-## 🔧 環境変数設定
+## 💻 CLI（コマンドラインインタフェース）
 
-`.zshrc` または `.bashrc` に追加:
+CLIはスクリプト連携や自動化など特定の用途に利用できます。通常は WebUI の使用を推奨します。
+
+### 基本的な起動
 
 ```bash
-# Ollama設定
-export OLLAMA_MODEL=mixtral              # デフォルトモデル
-export OLLAMA_URL=http://localhost:11434 # Ollamaサーバー
+researcher --model llama3.3 --auto-search-default --stream
+```
 
-# SearXNG設定
-export SEARXNG_URL=http://localhost:8888 # SearXNGサーバー
+OpenAI 互換プロバイダのモデルを使う場合:
 
+```bash
+researcher --model "VeniceAI::llama-3.3-70b" --auto-search-default --stream
+```
 
-# Agent設定
-export AGENT_LANGUAGE=en                  # QueryAgent言語（ja/en）
-export AUTO_SEARCH_DEFAULT=true           # デフォルトで自動検索を有効
+### CLI フラグリファレンス
 
-# Embedding設定
+| フラグ | 説明 | デフォルト |
+|--------|------|-----------|
+| `--model` | 使用するモデル（`モデル名` または `プロバイダ名::モデル名`） | settings.json の値 |
+| `--stream` | ストリーミング出力を有効化 | OFF |
+| `--no-stream` | ストリーミング出力を無効化 | — |
+| `--auto-search-default` | デフォルトで自動検索を有効 | OFF |
+| `--no-auto-search` | 自動検索を無効化 | — |
+| `--searxng-url` | SearXNG サーバーの URL | `http://localhost:8888` |
+| `--embedding-model` | 埋め込みモデル名 | settings.json の値 |
+| `--relevance-threshold` | 再ランク時の関連性閾値 | `0.5` |
+| `--agent-language` | QueryAgent の言語（`ja` / `en`） | `ja` |
+| `--enable-mcp` | MCP 機能を有効化 | OFF |
+| `--mcp-config` | MCP サーバー設定ファイルのパス | デフォルト設定 |
+
+### REPL コマンド（CLI 実行中）
+
+| コマンド | 説明 |
+|---------|------|
+| `/search <query>` | 手動で検索を実行 |
+| `/blacklist [show\|add\|clear]` | ドメインブラックリスト管理 |
+| `/history` | 会話履歴を表示 |
+| `/clear` | 履歴をクリア |
+| `/status` | Ollama / SearXNG の接続状態を確認 |
+| `/last_eval` | 最後の回答の自己評価スコアを表示 |
+| `/feedback [thumbs_up\|thumbs_down\|stats]` | フィードバック送信・統計表示 |
+| `/exit` | CLI を終了 |
+
+---
+
+## 🔧 環境変数
+
+`.zshrc` または `.bashrc` に追加することで CLI / WebUI 両方に適用されます。Settings ページでの設定が優先されます。
+
+```bash
+# Ollama
+export OLLAMA_MODEL=llama3.3
+export OLLAMA_URL=http://localhost:11434
+
+# SearXNG
+export SEARXNG_URL=http://localhost:8888
+
+# Agent
+export AGENT_LANGUAGE=ja               # QueryAgent 言語（ja/en）
+export AUTO_SEARCH_DEFAULT=true        # デフォルトで自動検索を有効
+
+# Embedding
 export EMBEDDING_MODEL=nomic-embed-text-v2-moe
-export RELEVANCE_THRESHOLD=0.5            # デフォルト値（run.sh と一致）。0.0 で全結果返却、値を上げると精度優先
+export RELEVANCE_THRESHOLD=0.5
 
-# MCP設定
+# MCP
 export MCP_CONFIG=/path/to/mcp-config.json
 ```
-
-反映:
-```bash
-source ~/.zshrc
-```
-
----
-
-## 📋 実行中のコマンド（REPL）
-
-| コマンド | 説明 | 例 |
-|---------|------|-----|
-| `/search <query>` | 手動で検索を実行 | `/search Python 3.14 new features` |
-| `/blacklist [show\|add\|clear]` | ドメインブラックリスト管理 | `/blacklist add wsj.com` |
-| `/history` | 会話履歴を表示 | `/history` |
-| `/clear` | 履歴をクリア | `/clear` |
-| `/status` | Ollama/SearXNG接続状態を確認 | `/status` |
-| `/last_eval` | 最後の回答の自己評価スコアを表示 | `/last_eval` |
-| `/exit` | CLIを終了 | `/exit` |
 
 ---
 
 ## 🚨 トラブルシューティング
 
-### Ollamaサーバーが起動しない
+### Ollama が起動しない
+
 ```bash
-# 確認
+# インストール確認
 which ollama
 
-# インストール（未インストール時）
+# インストール（未インストールの場合）
 curl -fsSL https://ollama.ai/install.sh | sh
 
 # 手動起動
@@ -324,304 +309,66 @@ ollama serve
 ```
 
 ### モデルが見つからないエラー
+
 ```bash
 # インストール済みモデル確認
 ollama list
 
-# モデルをダウンロード（所要時間: 数分〜数十分）
-ollama pull gpt-oss:20b              # メインモデル
+# モデルをダウンロード
+ollama pull llama3.3
 ollama pull nomic-embed-text-v2-moe  # 埋め込みモデル
-ollama pull mixtral                   # 代替モデル
 ```
 
-### SearXNG JSON API エラー (403)
-**症状**: `[検索結果は見つかりませんでした。]` と表示される
+### SearXNG JSON API エラー（403 / 空の検索結果）
 
-**原因**: SearXNGのJSON APIが無効な場合、自動的にHTML解析にフォールバック
+**症状**: `[検索結果は見つかりませんでした]` と表示される
 
-**解決策**:
+**確認・対処**:
+
 ```bash
-# SearXNG が起動しているか確認
-docker ps | grep searxng
+# Docker の場合
+docker ps | grep searxng      # 起動確認
+docker restart searxng        # 再起動
 
-# 起動していない場合は再起動
-docker run -d -p 8888:8080 --name searxng searxng/searxng
+# Podman の場合
+podman ps | grep searxng
+podman restart searxng
 
-# キャッシュをクリア
-cd researcher
-find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null
+# JSON API の疎通確認
+curl "http://localhost:8888/search?q=test&format=json"
 ```
 
-### ポート競合エラー
-```bash
-# 使用中のポート確認
-lsof -i :8888   # SearXNG
-lsof -i :11434  # Ollama
+応答が `{"results": []}` 以外のエラーになる場合、`searxng_settings.yml` の `search.formats` に `json` が含まれているか確認し、コンテナを再作成してください。
 
-# プロセス終了
-kill -9 <PID>
+### OpenAI 互換プロバイダ接続エラー
 
-# または Ollama/SearXNG を明示的に再起動
-./setup.sh
-```
+**症状**: Settings ページでプロバイダ保存時に接続エラーが表示される
 
-### MCP 接続エラー
-**症状**: `[WARN] すべてのMCPサーバーへの接続に失敗しました`
-
-**原因**: MCPサーバー設定が正しくない、またはNode.jsモジュールが見つからない
-
-**解決策**:
-```bash
-# MCPの詳細ドキュメントを参照
-cat docs/mcp-setup.md
-```
+**確認事項**:
+- ベース URL が `/v1` で終わっているか（例: `https://api.venice.ai/api/v1`）
+- API キーが有効か
+- 設定したモデル名がプロバイダで有効か
 
 ### ペイウォール・アクセス制限ドメインの対策
 
-**症状**: 特定のドメイン（例: wsj.com, nytimes.com）からの情報取得に失敗し、ハルシネーションが発生する
+失敗したドメインは自動的にブラックリストに追加され、次回以降スキップされます。CLI では `/blacklist` コマンドで管理できます。ブラックリストは `~/.researcher/blacklist.json` に保存されます。
 
-**原因**: ペイウォールや認証が必要なサイトはクロールできず、LLMが古い知識で回答してしまう
-
-**解決策**:
-
-1. **自動ブラックリスト**: 失敗したドメインは自動的にブラックリストに追加され、次回以降スキップされます
-   ```bash
-   ./run.sh --auto-search-default
-   You: 最新の経済ニュースは？
-   [検索実行中...クロール失敗時は自動的にブラックリストに追加されます]
-   ```
-   失敗したドメインはログに記録され、ブラックリストファイル（`~/.researcher/blacklist.json`）に自動保存されます。次回検索時から該当ドメインはスキップされます。
-
-2. **手動ブラックリスト追加**: 問題のあるドメインを事前に追加
-   ```bash
-   You: /blacklist add wsj.com
-   [ブラックリストに追加: wsj.com]
-   
-   You: /blacklist add https://nytimes.com/news
-   [ブラックリストに追加: nytimes.com]
-   ```
-   URL形式での指定も対応しており、自動的にドメイン部分を抽出して追加されます。
-
-3. **ブラックリスト確認**:
-   ```bash
-   You: /blacklist show
-   [ブラックリストドメイン]
-     - nytimes.com
-     - wsj.com
-   ```
-
-4. **ブラックリストクリア**（誤追加時）:
-   ```bash
-   You: /blacklist clear
-   ブラックリストをクリアしますか？ (yes/no): yes
-   [ブラックリストをクリアしました]
-   ```
-
-**ヒント**: ブラックリストは `~/.researcher/blacklist.json` に保存され、再起動後も保持されます。
-
-### ハルシネーション対策（企業製品の最新情報）
-
-**症状**: 企業製品（例: TIBCO EBX、Salesforce）の最新情報を質問すると、LLMが古い訓練データ（例: 「EBX 6.0は2024年11月リリース」）を返す
-
-**原因**: LLMが訓練データと検索結果を混在させ、古い知識を優先する場合がある
-
-**解決策**:
-
-1. **`--auto-search` を有効化**: 企業製品クエリは自動的にWeb検索対象として認識されます
-   ```bash
-   ./run.sh --auto-search-default
-   You: TIBCO EBXの最新機能は？
-   [検索実行中... 公式ドキュメント・リリースノートを優先検索]
-   ```
-
-2. **検索結果の確認**: 回答末尾の「参照」セクションで、検索元が公式ドキュメント・リリースノートから取得されているか確認してください。
-
-3. **システム対応**: 本システムは以下の強化を実装しており、ハルシネーションを軽減しています：
-   - **訓練知識の無視指示**: RAGプロンプトに「提供された検索結果のみを事実として使用」を明記
-   - **最新情報優先**: リリースノート、バージョン番号、日付を最優先の事実として指定
-   - **公式ドキュメント優先検索**: クエリ分析で「企業製品の最新版」を明示的に検索対象化
-   - **リトライ時の公式docs優先**: クロール失敗時、公式ドキュメントを優先する代替クエリを自動生成
-
-### モデル別品質分析
-
-researcher はフィードバック機能を通じて**モデル別の品質統計**を収集・分析できます。
-
-#### CLI フィードバック機能
-
-最後の回答に対してフィードバックを送信：
+### ポート競合
 
 ```bash
-You: 最新のPython 3.13の機能は？
-[回答表示]
+# Windows
+netstat -ano | findstr :8888
+netstat -ano | findstr :11434
 
-You: /feedback thumbs_up        # 良い回答をフィードバック
-[👍 フィードバックを保存しました (thumbs_up)]
-
-You: /feedback thumbs_down      # 悪い回答をフィードバック
-[👎 フィードバックを保存しました (thumbs_down)]
+# macOS / Linux
+lsof -i :8888
+lsof -i :11434
 ```
 
-モデル別統計を表示：
+### MCP 接続エラー
 
 ```bash
-You: /feedback stats            # 全モデルの統計
-[フィードバック統計]
-  全体 👎率: 15.0%
-  👎数: 3/20
-  
-  モデル別統計:
-    gpt-oss:20b: 👎率 25.0% (5/20)
-    llama3.2: 👎率 10.0% (1/10)
-    mixtral: 👎率 5.0% (1/20)
-
-You: /feedback stats gpt-oss:20b  # 特定モデルの統計
-[フィードバック統計]
-  モデル: gpt-oss:20b
-  👎率: 25.0%
-  👎数: 5/20
-```
-
-#### WebUI フィードバック機能
-
-各回答の下部に👍/👎ボタンが表示され、クリックでフィードバック送信：
-
-- **👍 良い**: 回答が正確で有用だった場合
-- **👎 悪い**: 回答が不正確または不十分だった場合
-
-サイドバーの「品質指標」セクションに以下が表示：
-
-```
-📊 品質指標
-  👎率 (全モデル): 15.0%
-  👎率 (gpt-oss:20b): 25.0%
-```
-
-#### フィードバック記録形式
-
-フィードバックは `~/.researcher/feedback.json` に以下の形式で記録：
-
-```json
-[
-  {
-    "timestamp": "2025-01-01T10:30:45",
-    "query": "最新のPython 3.13の機能は？",
-    "response": "Python 3.13には...の機能が追加されました",
-    "rating": "up",
-    "model": "gpt-oss:20b",
-    "session_id": 1
-  }
-]
-```
-
-#### モデル別品質分析の活用例
-
-```bash
-# 1. gpt-oss:20bの誤り率が高い (25%) ことを発見
-/feedback stats gpt-oss:20b
-👎率: 25.0%
-
-# 2. llama3.2の方が正確 (10%) であることを確認
-/feedback stats llama3.2
-👎率: 10.0%
-
-# 3. llama3.2に切り替え
---model llama3.2 を使用して再起動
-
-# 4. 後続のフィードバックで改善を追跡
-/feedback stats llama3.2
-👎率: 8.0% (改善!)
-```
-
-#### 自動評価スコアの確認
-
-CLI では `--enable-self-eval` フラグを使用して、自動的に各回答を評価することができます。最後の評価スコアは `/last_eval` コマンドで確認できます：
-
-```bash
-You: 最新のPython 3.13の機能は？
-[回答表示]
-
-You: /last_eval
-[最後の自己評価スコア]
-  正確性: 0.85
-  新鮮性: 0.92
-  総合: 0.88
-```
-
-WebUI では、サイドバーの「品質指標」セクションに自動評価スコアが常時表示されます。
-
----
-
-## 📚 詳細ドキュメント
-
-より詳しい情報は以下をご覧ください：
-
-- **[MCP 統合ガイド](docs/mcp-setup.md)** - MCPサーバーの設定と使用方法
-
----
-
-## 🔌 WebCrawler RAG統合
-
-researcher は検索結果のコンテンツをLLMに提供するための **WebCrawler RAG層** を備えています。デフォルトでは `WebCrawler` クラスがHTMLコンテンツを抽出します。
-
-### WebCrawler インターフェース
-
-カスタムWebクローラーを実装する場合は、以下のインターフェースに従ってください：
-
-```python
-class CustomWebCrawler:
-    def crawl_results(
-        self, results: List[Dict[str, Any]], max_urls: int = 3
-    ) -> Dict[str, Any]:
-        """
-        検索結果から上位N個のURLをクロールし、コンテンツとメタデータを抽出します。
-        
-        このメソッドの戻り値は ChatManager の retry ロジックで使用されるため、
-        必ず以下の構造を返す必要があります。
-        
-        Args:
-            results: 検索結果のリスト（各要素は "url" キーを持つ辞書）
-            max_urls: クロール対象の最大URL数
-            
-        Returns:
-            {
-                "content": Dict[str, str],           # URL -> 抽出されたテキストコンテンツ
-                "failed_domains": Set[str],          # クロール失敗したドメイン
-                "success_rate": float,               # 成功率 (0.0-1.0)
-                "total_attempts": int,               # 試行総数
-                "successful_crawls": int             # 成功したクロール数
-            }
-            
-        ChatManager は success_rate < 0.5 の場合、Agent を使用して
-        alternate query を生成し、失敗したドメインを避けて再検索を試みます。
-        custom implementation でも、これらのフィールドを意味のある値で
-        埋めることで retry ロジックが機能します。
-        """
-        pass
-    
-    def format_crawled_content(self, crawled_content: Dict[str, str]) -> str:
-        """
-        クロール結果をLLMコンテキストに注入可能な形式にフォーマットします。
-        
-        Args:
-            crawled_content: crawl_results() の戻り値の "content" フィールド
-            
-        Returns:
-            ユーザーメッセージに追記可能な単一の文字列
-        """
-        pass
-```
-
-### 使用例
-
-CLIで `ChatManager` に WebCrawler インスタンスを渡すと、自動的に検索結果から上位3つのURLをクロールし、抽出したコンテンツをLLMに提供します。
-失敗率が高い場合（success_rate < 0.5）、Agent が新しいクエリを生成して再検索を試みます：
-
-```python
-from researcher.web_crawler import WebCrawler
-from researcher.chat_manager import ChatManager
-
-crawler = WebCrawler(timeout=10)
-chat = ChatManager(..., web_crawler=crawler, agent=agent)  # agent が retry 時に使用されます
+cat docs/mcp-setup.md
 ```
 
 ---
@@ -629,110 +376,103 @@ chat = ChatManager(..., web_crawler=crawler, agent=agent)  # agent が retry 時
 ## 📊 システムアーキテクチャ
 
 ```
-┌─────────────────────────────────────────┐
-│            ./run.sh                     │ ← これだけ実行！
-└──────────────┬──────────────────────────┘
-               │
-        ┌──────┴──────────────────────────┐
-        │                                 │
-        ▼                                 ▼
-┌──────────────────┐            ┌──────────────────┐
-│ Ollama起動確認   │            │ SearXNG起動確認  │
-│ :11434           │            │ :8888            │
-└──────────────────┘            └──────────────────┘
-        │                                 │
-        └──────────┬──────────────────────┘
-                   │
-                   ▼
-         ┌─────────────────────┐
-         │   researcher CLI    │
-         └──────────┬──────────┘
-                    │
-        ┌───────────┼───────────┐
-        │           │           │
-        ▼           ▼           ▼
-  ┌──────────┐ ┌──────────┐ ┌──────────┐
-  │QueryAgent│ │ SearXNG  │ │MCP Tools │
-  │ 検索判定 │ │ Web検索  │ │統合連携  │
-  └──────────┘ └──────────┘ └──────────┘
-        │           │           │
-        └───────────┼───────────┘
-                    │
-                    ▼
-         ┌─────────────────────┐
-         │  LLM + 引用生成     │
-         │  (ChatManager)      │
-         └─────────────────────┘
-```
----
-
-## 🧪 テスト実行例
-
-### テスト 1: 基本的な質問
-```bash
-./run.sh
-
-You: こんにちは
-こんにちは。お手伝いできることはありますか？
-
-You: /exit
-```
-
-### テスト 2: 自動検索が動作するか確認
-```bash
-./run.sh --auto-search-default
-
-You: 2025年のノーベル賞受賞者は？
-[検索結果が自動で取得される...]
-
-You: /exit
-```
-
-### テスト 3: 英語モード
-```bash
-./run.sh --agent-language en
-
-You: What are the latest AI trends?
-[English query analysis...]
-
-You: /exit
+                    ブラウザ (http://localhost:8501)
+                           │
+                    ┌──────┴──────────────┐
+                    │  Streamlit WebUI    │  ← メインインタフェース
+                    │  Home / Chat /      │
+                    │  History / Settings │
+                    └──────────┬──────────┘
+                               │
+                    ┌──────────┴──────────┐
+                    │    ChatManager      │
+                    └──┬──────────────────┘
+                       │
+        ┌──────────────┼───────────────────┐
+        │              │                   │
+        ▼              ▼                   ▼
+┌─────────────┐ ┌────────────┐   ┌──────────────────┐
+│ QueryAgent  │ │  SearXNG   │   │   LLM Client     │
+│  検索判定   │ │  Web検索   │   │  Ollama /        │
+└─────────────┘ └────────────┘   │  OpenAI互換API   │
+        │              │          └──────────────────┘
+        │      ┌───────┴──────┐
+        │      │  WebCrawler  │
+        │      │  RAG 層      │
+        │      └──────────────┘
+        │              │
+        └──────────────┘
+                 │
+        ┌────────┴────────┐
+        │  CitationManager│
+        │  引用・評価生成  │
+        └─────────────────┘
 ```
 
 ---
 
-## ✨ パフォーマンス最適化
+## 🔌 WebCrawler カスタマイズ
 
-### 高速化設定
-```bash
-# GPU加速を使用（NVIDIA CUDAが必要）
-CUDA_VISIBLE_DEVICES=0 ./run.sh
+カスタム Web クローラーを実装する場合は、以下のインターフェースに従ってください:
 
-# 小さいモデルを使用
-./run.sh --model mistral  # より軽量
+```python
+class CustomWebCrawler:
+    def crawl_results(
+        self, results: list[dict], max_urls: int = 3
+    ) -> dict:
+        """
+        Returns:
+            {
+                "content": dict[str, str],   # URL -> 抽出テキスト
+                "failed_domains": set[str],  # 失敗ドメイン
+                "success_rate": float,       # 成功率 0.0-1.0
+                "total_attempts": int,
+                "successful_crawls": int,
+            }
+        """
+        ...
+
+    def format_crawled_content(self, crawled_content: dict[str, str]) -> str:
+        """クロール結果を LLM コンテキスト注入可能な文字列に変換"""
+        ...
 ```
 
-### メモリ節約設定
-```bash
-# ストリーミングなしで実行（出力を一度に返す）
-./run.sh --no-stream
+`success_rate < 0.5` の場合、Agent が自動的に代替クエリを生成して再検索を試みます。
 
-# または --stream フラグなしで実行
-./run.sh --model mistral --auto-search-default
+---
+
+## 🧪 開発・テスト
+
+```bash
+# 仮想環境セットアップ
+python -m venv venv
+source venv/bin/activate          # Windows: .\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+
+# テスト実行
+pytest tests/ -q --ignore=tests/e2e
+
+# E2E テスト（Streamlit が起動している状態で）
+pytest tests/e2e/
 ```
+
+---
+
+## 📚 詳細ドキュメント
+
+| ドキュメント | 内容 |
+|-------------|------|
+| [docs/streamlit-guide.md](docs/streamlit-guide.md) | WebUI の各部分・トラブルシューティング |
+| [docs/security.md](docs/security.md) | セキュリティ設定・推奨運用方法 |
+| [docs/mcp-setup.md](docs/mcp-setup.md) | MCP サーバーの設定と使用方法 |
+| [docs/architecture.md](docs/architecture.md) | システムアーキテクチャの詳細 |
 
 ---
 
 ## 🤝 コントリビューション
 
-Issues・PRを歓迎します！
-
-開発環境セットアップ:
-```bash
-python -m venv venv
-source venv/bin/activate
-pip install -e .
-pytest
-```
+Issues・PR を歓迎します！
 
 ---
 
@@ -744,15 +484,17 @@ MIT License
 
 ## 🙋 FAQ
 
-**Q: オフラインで使用できますか？**
-A: はい。Ollamaとモデルをダウンロード済みであれば、インターネット接続なしで動作します。SearXNG検索機能は使用できません。
+**Q: オフラインで使用できますか？**  
+A: はい。Ollama とモデルをダウンロード済みであれば、インターネット接続なしで動作します（SearXNG 検索機能は除く）。
 
-**Q: プライバシーは保護されていますか？**
-A: はい。すべてのデータはローカルマシンで処理され、外部のクラウドサービスに送信されません。
+**Q: プライバシーは保護されていますか？**  
+A: Ollama 使用時はすべてのデータがローカルマシンで処理されます。OpenAI 互換プロバイダを使用する場合、プロンプトはそのプロバイダのサーバーに送信されます。
 
-**Q: GPU を使用できますか？**
-A: Ollama が NVIDIA CUDA をサポートしている場合、自動的に GPU加速が有効になります。
+**Q: GPU を使用できますか？**  
+A: Ollama が NVIDIA CUDA をサポートしている場合、自動的に GPU 加速が有効になります。
 
-**Q: カスタムモデルを使用できますか？**
-A: はい。`ollama pull <model-name>` でインストール後、`--model` フラグで指定できます。
+**Q: OpenAI (api.openai.com) は使えますか？**  
+A: 現時点では OpenAI のチャット補完 API と互換性のある任意のエンドポイントを登録できます。Settings ページでベース URL を `https://api.openai.com/v1`、API キーを設定してください。
 
+**Q: Docker の代わりに Podman を使えますか？**  
+A: はい。SearXNG の起動コマンドの `docker` を `podman` に読み替えるだけで動作します。詳細は [SearXNG セットアップ](#-searxng-セットアップ) セクションを参照してください。
