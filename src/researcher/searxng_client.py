@@ -38,9 +38,13 @@ class SearXNGClient:
             raise ValueError(
                 f"未サポートの検索パラメータが含まれています: {invalid}. 対応しているキーは {allowed} です。"
             )
+        _safesearch_map = {"off": 0, "moderate": 1, "strict": 2}
         for key in allowed:
             if key in kwargs and kwargs[key] is not None:
-                params[key] = kwargs[key]
+                value = kwargs[key]
+                if key == "safesearch" and isinstance(value, str):
+                    value = _safesearch_map.get(value.lower(), 0)
+                params[key] = value
         
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",

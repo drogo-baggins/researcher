@@ -84,7 +84,6 @@ class OpenAICompatClient:
             payload = {
                 "model": self.model,
                 "messages": [{"role": "user", "content": "Hello"}],
-                "max_tokens": 5,
             }
             resp = requests.post(
                 self._chat_url(),

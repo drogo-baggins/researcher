@@ -89,6 +89,18 @@ def test_search_with_options(mock_get):
     assert params["safesearch"] == 1
 
 
+@pytest.mark.parametrize("label,expected", [("off", 0), ("moderate", 1), ("strict", 2)])
+@patch("researcher.searxng_client.requests.get")
+def test_search_safesearch_string_to_int(mock_get, label, expected):
+    """safesearch に文字列が渡された場合、SearXNG API 用の整数に変換されること"""
+    mock_get.return_value = _make_response({"results": []})
+    client = SearXNGClient("http://localhost:8888")
+    client.search("query", safesearch=label)
+
+    _, kwargs = mock_get.call_args
+    assert kwargs["params"]["safesearch"] == expected
+
+
 def test_search_invalid_parameter():
     client = SearXNGClient("http://localhost:8888")
     with pytest.raises(ValueError) as exc:

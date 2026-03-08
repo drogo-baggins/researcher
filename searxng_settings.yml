@@ -1,57 +1,17 @@
 # SearXNG settings file for researcher project
-# Explicitly enables JSON output format for API integration
+# Minimal override — only what's needed for JSON API integration.
+# All other settings inherit from the image's built-in defaults.
+
+use_default_settings: true
+
+search:
+  formats:
+    - html
+    - json
 
 server:
   port: 8080
   bind_address: "0.0.0.0"
-  base_url: false
+  secret_key: "researcher-local-dev-a7f3b9c2e1d4"
   image_proxy: true
   method: "GET"
-  default_http_headers:
-    X-Content-Type-Options: "nosniff"
-    X-XSS-Protection: "1; mode=block"
-    X-Frame-Options: "sameorigin"
-
-ui:
-  static_path: "/static"
-  templates_path: "/templates"
-  default_theme: "simple"
-  default_locale: "en"
-  image_proxy: true
-  center_alignment: false
-  results_on_new_tab: false
-
-search:
-  autocomplete: ""
-  autocomplete_min: 4
-  default_lang: ""
-  safe_search: 0
-  autocomplete_provider: "duckduckgo"
-
-redis:
-  url: false
-
-outgoing:
-  request_timeout: 3.0
-  max_retries: 0
-  pool_connections: 100
-  pool_maxsize: 10
-
-plugins:
-  oa_doi_resolver:
-    enable: true
-    resolve_all_domains: false
-    prefer_bibcode: true
-
-checker:
-  scheduling: false
-
-enabled_plugins:
-  - "Hash plugin"
-  - "Internal plugin"
-  - "Basic auth plugin"
-  - "Self Information"
-  - "Tracker URL remover"
-  - "IPv6 filter"
-
-

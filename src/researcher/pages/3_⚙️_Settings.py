@@ -2,12 +2,15 @@
 """
 Settings Page - Configure LLM models, OpenAI-compatible providers and SearXNG.
 """
+
 import streamlit as st
 from researcher.config import (
     load_settings,
     save_settings,
     DEFAULT_SETTINGS,
+    DEFAULT_OLLAMA_BASE_URL,
     MODEL_KEY_SEPARATOR,
+    get_ollama_base_url,
 )
 from researcher.ollama_client import OllamaClient
 
@@ -15,6 +18,7 @@ from researcher.ollama_client import OllamaClient
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
+
 
 def render_sidebar():
     with st.sidebar:
@@ -29,10 +33,12 @@ def render_sidebar():
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _get_ollama_models():
+
+def _get_ollama_models(settings: dict | None = None):
     """Return list of model names from local Ollama, or [] on error."""
     try:
-        client = OllamaClient()
+        base_url = get_ollama_base_url(settings)
+        client = OllamaClient(base_url=base_url)
         models = client.list_models()
         return models if models else []
     except Exception as e:
@@ -64,6 +70,7 @@ def _build_all_model_options(settings: dict, ollama_models: list) -> list:
 # ---------------------------------------------------------------------------
 # Render: Provider Management
 # ---------------------------------------------------------------------------
+
 
 def render_provider_settings(settings: dict) -> dict:
     """Render OpenAI-compatible provider management section."""
@@ -113,7 +120,9 @@ def render_provider_settings(settings: dict) -> dict:
 
                 col_upd, col_del = st.columns([3, 1])
                 with col_upd:
-                    if st.button("✅ 更新", key=f"prov_update_{idx}", use_container_width=True):
+                    if st.button(
+                        "✅ 更新", key=f"prov_update_{idx}", use_container_width=True
+                    ):
                         providers[idx] = {
                             "name": new_name.strip(),
                             "base_url": new_base_url.strip(),
@@ -126,7 +135,9 @@ def render_provider_settings(settings: dict) -> dict:
                         }
                         _save_providers_and_rerun(settings, providers)
                 with col_del:
-                    if st.button("🗑️ 削除", key=f"prov_delete_{idx}", use_container_width=True):
+                    if st.button(
+                        "🗑️ 削除", key=f"prov_delete_{idx}", use_container_width=True
+                    ):
                         to_delete = idx
 
         if to_delete is not None:
@@ -198,6 +209,7 @@ def _save_providers_and_rerun(settings: dict, providers: list) -> None:
 # Original get_available_models kept as private alias for tests
 # ---------------------------------------------------------------------------
 
+
 def get_available_models():
     return _get_ollama_models()
 
@@ -206,14 +218,38 @@ def get_available_models():
 # Render: LLM model selections
 # ---------------------------------------------------------------------------
 
-def render_llm_settings(settings: dict, all_model_options: list, ollama_models: list) -> dict:
+
+def render_llm_settings(
+    settings: dict, all_model_options: list, ollama_models: list
+) -> dict:
     st.subheader("🤖 LLMモデル設定")
 
+    # --- Ollama base URL ---
+    current_ollama_url = settings.get("ollama_base_url", "")
+    resolved_ollama_url = get_ollama_base_url(settings)
+    ollama_base_url = st.text_input(
+        "Ollama ベースURL",
+        value=current_ollama_url,
+        placeholder=DEFAULT_OLLAMA_BASE_URL,
+        help=(
+            f"Ollama サーバーの接続先URL。空欄の場合はデフォルト "
+            f"({DEFAULT_OLLAMA_BASE_URL}) を使用します。"
+            f"環境変数 OLLAMA_URL でもオーバーライド可能です。"
+        ),
+        key="ollama_base_url_input",
+    )
+    st.caption(f"🔗 現在の接続先: `{resolved_ollama_url}`")
+
+    st.markdown("---")
+
     if not all_model_options:
-        st.warning("利用可能なモデルが見つかりません。Ollamaサーバーへの接続またはプロバイダ設定を確認してください。")
+        st.warning(
+            "利用可能なモデルが見つかりません。Ollamaサーバーへの接続またはプロバイダ設定を確認してください。"
+        )
 
     st.info(
         f"**現在の設定**:\n"
+        f"- Ollama接続先: {resolved_ollama_url}\n"
         f"- 検索語生成: {settings.get('search_model') or '(未設定)'}\n"
         f"- 回答生成: {settings.get('response_model') or '(未設定)'}\n"
         f"- 品質検証: {settings.get('eval_model') or '(未設定)'}\n"
@@ -232,21 +268,49 @@ def render_llm_settings(settings: dict, all_model_options: list, ollama_models: 
     def _sel(label, setting_key, help_text, widget_key):
         default = settings.get(setting_key, "")
         idx = options.index(default) if default and default in options else 0
-        return st.selectbox(label, options=options, index=idx, help=help_text, key=widget_key)
+        return st.selectbox(
+            label, options=options, index=idx, help=help_text, key=widget_key
+        )
 
-    search_model = _sel("検索語生成モデル", "search_model", "Web検索のキーワード生成に使用するモデル", "search_model_select")
-    response_model = _sel("回答生成モデル", "response_model", "ユーザーへの回答生成に使用するモデル", "response_model_select")
-    eval_model = _sel("品質検証モデル", "eval_model", "回答の品質評価に使用するモデル（軽量モデル推奨）", "eval_model_select")
+    search_model = _sel(
+        "検索語生成モデル",
+        "search_model",
+        "Web検索のキーワード生成に使用するモデル",
+        "search_model_select",
+    )
+    response_model = _sel(
+        "回答生成モデル",
+        "response_model",
+        "ユーザーへの回答生成に使用するモデル",
+        "response_model_select",
+    )
+    eval_model = _sel(
+        "品質検証モデル",
+        "eval_model",
+        "回答の品質評価に使用するモデル（軽量モデル推奨）",
+        "eval_model_select",
+    )
 
     # Warn if an Ollama-style model name is not present in the actual Ollama list
     ollama_model_names = [m for m in all_model_options if MODEL_KEY_SEPARATOR not in m]
-    for lbl, val in [("検索語生成", search_model), ("回答生成", response_model), ("品質検証", eval_model)]:
-        if val and MODEL_KEY_SEPARATOR not in val and ollama_model_names and val not in ollama_model_names:
+    for lbl, val in [
+        ("検索語生成", search_model),
+        ("回答生成", response_model),
+        ("品質検証", eval_model),
+    ]:
+        if (
+            val
+            and MODEL_KEY_SEPARATOR not in val
+            and ollama_model_names
+            and val not in ollama_model_names
+        ):
             st.warning(f"⚠️ {lbl}モデル '{val}' がOllamaに見つかりません。")
 
     st.markdown("---")
     st.markdown("**埋め込みモデル（リランカー用）**")
-    st.caption("検索結果の関連度スコアリングに使用します。Ollamaで利用可能な埋め込みモデルを指定してください。")
+    st.caption(
+        "検索結果の関連度スコアリングに使用します。Ollamaで利用可能な埋め込みモデルを指定してください。"
+    )
 
     # Well-known embedding models to always show as options
     KNOWN_EMBED_MODELS = [
@@ -265,7 +329,9 @@ def render_llm_settings(settings: dict, all_model_options: list, ollama_models: 
     if current_embed and current_embed not in embed_options:
         embed_options.insert(0, current_embed)
 
-    embed_idx = embed_options.index(current_embed) if current_embed in embed_options else 0
+    embed_idx = (
+        embed_options.index(current_embed) if current_embed in embed_options else 0
+    )
     embedding_model = st.selectbox(
         "埋め込みモデル",
         options=embed_options,
@@ -275,19 +341,23 @@ def render_llm_settings(settings: dict, all_model_options: list, ollama_models: 
     )
 
     if embedding_model and ollama_models and embedding_model not in ollama_models:
-        st.warning(f"⚠️ 埋め込みモデル '{embedding_model}' がOllamaに見つかりません。`ollama pull {embedding_model}` を実行してください。")
+        st.warning(
+            f"⚠️ 埋め込みモデル '{embedding_model}' がOllamaに見つかりません。`ollama pull {embedding_model}` を実行してください。"
+        )
 
     return {
         "search_model": search_model,
         "response_model": response_model,
         "eval_model": eval_model,
         "embedding_model": embedding_model,
+        "ollama_base_url": ollama_base_url.strip(),
     }
 
 
 # ---------------------------------------------------------------------------
 # Render: UI settings
 # ---------------------------------------------------------------------------
+
 
 def render_ui_settings(settings: dict) -> dict:
     st.subheader("🎨 UI設定")
@@ -296,9 +366,12 @@ def render_ui_settings(settings: dict) -> dict:
     current = settings.get("ui_text_size", "medium")
     idx = size_options.index(current) if current in size_options else 1
     selected = st.selectbox(
-        "文字サイズ", options=size_options, index=idx,
+        "文字サイズ",
+        options=size_options,
+        index=idx,
         format_func=lambda x: size_labels[x],
-        help="全ページの文字サイズを変更します", key="ui_text_size_select",
+        help="全ページの文字サイズを変更します",
+        key="ui_text_size_select",
     )
     return {"ui_text_size": selected}
 
@@ -306,6 +379,7 @@ def render_ui_settings(settings: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Render: SearXNG
 # ---------------------------------------------------------------------------
+
 
 def render_searxng_settings(settings: dict) -> dict:
     st.subheader("🔍 SearXNG検索設定")
@@ -319,28 +393,44 @@ def render_searxng_settings(settings: dict) -> dict:
     engine_options = ["general", "news", "science", "images", "カスタム"]
     current_engine = settings.get("searxng_engine", "general")
     is_custom = current_engine not in ["general", "news", "science", "images"]
-    engine_idx = engine_options.index("カスタム") if is_custom else engine_options.index(current_engine)
+    engine_idx = (
+        engine_options.index("カスタム")
+        if is_custom
+        else engine_options.index(current_engine)
+    )
     sel_engine_opt = st.selectbox(
-        "検索エンジン", options=engine_options, index=engine_idx,
-        help="SearXNGで使用する検索エンジンカテゴリ", key="searxng_engine_select",
+        "検索エンジン",
+        options=engine_options,
+        index=engine_idx,
+        help="SearXNGで使用する検索エンジンカテゴリ",
+        key="searxng_engine_select",
     )
     sel_engine = sel_engine_opt
     if sel_engine_opt == "カスタム":
         sel_engine = st.text_input(
-            "カスタムエンジン名", value=current_engine if is_custom else "",
+            "カスタムエンジン名",
+            value=current_engine if is_custom else "",
             placeholder="例: duckduckgo, google, bing",
-            help="SearXNGでサポートされているエンジン名を入力", key="custom_engine_input",
+            help="SearXNGでサポートされているエンジン名を入力",
+            key="custom_engine_input",
         )
 
     lang_options = ["ja", "en"]
     cur_lang = settings.get("searxng_lang", "ja")
     lang_idx = lang_options.index(cur_lang) if cur_lang in lang_options else 0
-    sel_lang = st.selectbox("検索言語", options=lang_options, index=lang_idx, key="searxng_lang_select")
+    sel_lang = st.selectbox(
+        "検索言語", options=lang_options, index=lang_idx, key="searxng_lang_select"
+    )
 
     safe_options = ["off", "moderate", "on"]
     cur_safe = settings.get("searxng_safesearch", "off")
     safe_idx = safe_options.index(cur_safe) if cur_safe in safe_options else 0
-    sel_safe = st.selectbox("セーフサーチ", options=safe_options, index=safe_idx, key="searxng_safesearch_select")
+    sel_safe = st.selectbox(
+        "セーフサーチ",
+        options=safe_options,
+        index=safe_idx,
+        key="searxng_safesearch_select",
+    )
 
     return {
         "searxng_engine": sel_engine,
@@ -353,6 +443,7 @@ def render_searxng_settings(settings: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main():
     st.set_page_config(page_title="Settings - Researcher", page_icon="⚙️", layout="wide")
@@ -382,7 +473,7 @@ def main():
     st.divider()
 
     # --- LLM model selectors ---
-    ollama_models = _get_ollama_models()
+    ollama_models = _get_ollama_models(settings)
     all_model_options = _build_all_model_options(settings, ollama_models)
     llm_selections = render_llm_settings(settings, all_model_options, ollama_models)
 
@@ -400,12 +491,22 @@ def main():
 
     col1, col2 = st.columns(2)
     with col1:
-        save_button = st.button("💾 設定を保存", type="primary", use_container_width=True, key="save_settings_button")
+        save_button = st.button(
+            "💾 設定を保存",
+            type="primary",
+            use_container_width=True,
+            key="save_settings_button",
+        )
     with col2:
-        reset_button = st.button("🔄 デフォルトに戻す", use_container_width=True, key="reset_settings_button")
+        reset_button = st.button(
+            "🔄 デフォルトに戻す", use_container_width=True, key="reset_settings_button"
+        )
 
     if save_button:
-        if searxng_selections["is_custom_engine"] and not searxng_selections["searxng_engine"].strip():
+        if (
+            searxng_selections["is_custom_engine"]
+            and not searxng_selections["searxng_engine"].strip()
+        ):
             st.warning("カスタムエンジン名を入力してください")
         else:
             new_settings = {
@@ -438,4 +539,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

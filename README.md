@@ -460,7 +460,64 @@ pytest tests/e2e/
 
 ---
 
-## 📚 詳細ドキュメント
+## � サンドボックス開発
+
+本プロジェクトでは [opencode](https://github.com/nichochar/opencode) のサンドボックス機能を使い、Linux コンテナ上でコーディングエージェントによる開発を行っています。
+
+### 前提条件
+
+- `opencode-sandbox` コマンドが PATH に登録済み
+- Docker または Podman が起動済み
+
+### 事前準備（ホスト Windows 側で実行）
+
+サンドボックス起動前に、アプリが必要とする外部サービスのコンテナを立ち上げておきます。
+
+```powershell
+# SearXNG 起動
+.\scripts\searxng-start.ps1
+
+# SearXNG 停止（作業終了時）
+.\scripts\searxng-stop.ps1
+```
+
+> Linux 環境から直接実行する場合は `./scripts/searxng-start.sh` / `./scripts/searxng-stop.sh` を使用してください。
+
+### サンドボックス起動
+
+```bash
+opencode-sandbox
+```
+
+### データ永続化とボリューム共有
+
+アプリのデータストアはユーザープロファイル配下の `~/.researcher` ディレクトリです。
+`.opencode-sandbox.json` で以下のボリュームマッピングが定義されており、サンドボックス再作成後もデータが保持されます。
+
+```
+ホスト (Windows)                        → コンテナ (Linux)
+C:\Users\<user>\sandbox\.researcher     → /root/.researcher
+```
+
+### ホスト / サンドボックス間のリソース分離
+
+Python の venv はバイナリが OS 間で互換性がないため、ホストとサンドボックスで別々に管理されます。
+
+| リソース | ホスト (Windows) | サンドボックス (Linux) |
+|----------|-----------------|----------------------|
+| Python venv | プロジェクトルート `venv/` | ボリューム上 `/root/.researcher/venv/` |
+| venv 初期化スクリプト | `scripts/sandbox-init.ps1` | `scripts/sandbox-init.sh` |
+| SearXNG 起動 | `scripts/searxng-start.ps1` | `scripts/searxng-start.sh` |
+| SearXNG 停止 | `scripts/searxng-stop.ps1` | `scripts/searxng-stop.sh` |
+| 環境変数設定 | `setenv.ps1` | `setenv.sh` |
+| アプリデータ (`~/.researcher`) | 共有（ボリュームマウント経由で同一データ） | 共有 |
+
+Windows 側の venv はホストファイルシステム上にあるため自然に永続化されます。
+Linux 側の venv はコンテナ破棄で消えるため、ボリュームマウントされた `/root/.researcher/venv/` に配置し、`scripts/sandbox-init.sh` がコンテナ起動時に自動で作成・更新します。
+
+---
+
+## �📚 詳細ドキュメント
 
 | ドキュメント | 内容 |
 |-------------|------|
